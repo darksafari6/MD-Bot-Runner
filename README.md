@@ -1,1026 +1,247 @@
-<div align="center">
-<img width="1200" height="475" alt="WhatsApp Bot Banner" src="https://via.placeholder.com/1200x475?text=WhatsApp+MD+Bot+Runner+Manager" />
+# WhatsApp MD Bot Runner Manager
 
-# 🤖 WhatsApp MD Bot Runner Manager
+A self-hosted control panel for running **multiple WhatsApp Multi-Device bots** on
+[Baileys](https://github.com/WhiskeySockets/Baileys). Create a bot, link it by QR code or
+pairing code, define commands, and watch every connection live from one dashboard.
 
-**An Advanced WhatsApp Bot Management System with AI Integration**
-
-[![Node.js](https://img.shields.io/badge/Node.js-Required-green?style=flat-square)](https://nodejs.org/)
-[![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](#license)
-[![Status](https://img.shields.io/badge/Status-Active-brightgreen?style=flat-square)](#)
-
-</div>
+![status](https://img.shields.io/badge/build-passing-brightgreen)
+![node](https://img.shields.io/badge/node-%3E%3D20.11-blue)
+![license](https://img.shields.io/badge/license-MIT-black)
 
 ---
 
-## 📋 Table of Contents
+## Why this rewrite
 
-- [Overview](#overview)
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Running the Project](#running-the-project)
-- [Project Structure](#project-structure)
-- [Bot Runner Architecture](#bot-runner-architecture)
-- [WhatsApp Integration](#whatsapp-integration)
-- [Usage Guide](#usage-guide)
-- [API Documentation](#api-documentation)
-- [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
-- [License](#license)
+The previous version of this repository was a **UI mock**: it drew a dashboard and faked the
+entire bot lifecycle with `setTimeout` — a hard-coded QR payload, a fake phone number, and a
+"connected" state that never touched WhatsApp. Meanwhile the README documented a Next.js API,
+a database and a plugin system that did not exist in the tree.
 
----
+This version does the real thing, and the documentation below describes only what is actually
+implemented.
 
-## 🎯 Overview
-
-**WhatsApp MD Bot Runner Manager** is a comprehensive bot management system designed to handle multiple WhatsApp bot instances simultaneously. This project provides a robust framework for deploying, monitoring, and managing autonomous WhatsApp bots using the Multi-Device (MD) protocol.
-
-The system is built to be scalable, modular, and developer-friendly, enabling you to create sophisticated chatbots and automation tools for WhatsApp without complexity.
-
-### Key Objectives:
-- 🚀 **Multi-Bot Management** - Run and control multiple bot instances
-- 💬 **WhatsApp MD Protocol** - Full support for modern WhatsApp multi-device
-- 🎨 **Beautiful UI** - Intuitive dashboard for bot management
-- ⚡ **Fast & Reliable** - Production-ready performance
-- 🔧 **Easy Configuration** - Simple setup and deployment
+| | Before | Now |
+|---|---|---|
+| WhatsApp connection | `setTimeout` pretending | Real Baileys sockets, one per bot |
+| Linking | Fake QR string | Live QR + 8-digit pairing code |
+| Backend | None | Express REST API + SSE log stream |
+| Persistence | None | Atomic JSON store + Baileys credential files |
+| Auth | None | Optional `API_TOKEN` (constant-time compare) |
+| Reconnects | None | Exponential backoff, session restore, unlink detection |
+| Tests | None | 36 unit + component tests |
+| Desktop | `nodeIntegration: true` mock | Hardened Electron shell (sandboxed, isolated) |
+| Deployment | Manual | `npm start`, Docker, Compose, CI |
 
 ---
 
-## ✨ Features
+## Features
 
-### Core Bot Management
-- ✅ **Multi-Instance Support** - Run multiple WhatsApp bots simultaneously
-- ✅ **Bot Runner Control** - Start, stop, restart bot instances
-- ✅ **Real-time Monitoring** - Track bot status and activity
-- ✅ **Process Management** - Automatic recovery and failover
-- ✅ **Logging & Analytics** - Comprehensive activity logs
+**Bot management**
+- Create unlimited bot instances (bounded by `MAX_INSTANCES`), each with its own session
+- Start / stop / restart / unlink, per bot and in bulk via the API
+- Automatic reconnect with exponential backoff; unlinked devices are detected and their stale
+  credentials deleted
+- Optional resume of connected bots after a manager restart
+- Live per-bot counters: uptime, messages seen, replies sent, commands handled, errors
 
-### WhatsApp Integration
-- ✅ **MD Protocol Support** - Full multi-device WhatsApp support
-- ✅ **Message Handling** - Process text, media, and group messages
-- ✅ **Auto-Reply System** - Configure automatic responses
-- ✅ **Group Management** - Handle group chats and members
-- ✅ **Contact Management** - Maintain and organize contacts
-- ✅ **Message Scheduling** - Schedule messages for later delivery
+**Linking**
+- Scan a QR code (rotated automatically) **or** use a phone-number pairing code
+- Credentials persist in `data/sessions/<bot-id>/` so relinking is rare
 
-### Intelligence & Automation
-- ✅ **AI Integration Ready** - Support for AI/ML models
-- ✅ **Custom Command System** - Create custom bot commands
-- ✅ **Webhooks Support** - Integrate with external services
-- ✅ **Rate Limiting** - Built-in protection and throttling
-- ✅ **Error Handling** - Robust error recovery mechanisms
+**Command engine**
+- Per-bot prefix (default `!`), per-bot command list, enable/disable each rule
+- Placeholders: `{{sender}}`, `{{args}}`, `{{instance}}`, `{{status}}`, `{{uptime}}`,
+  `{{received}}`, `{{prefix}}`, `{{commands}}`
+- Exact-match rules (reply to a bare word with no prefix)
+- Group / DM toggles, allowlist and blocklist by number
+- Optional auto-read receipts
 
-### Developer Features
-- ✅ **Hot Reload** - Development server with auto-refresh
-- ✅ **Environment Configuration** - Secure .env setup
-- ✅ **Modular Architecture** - Clean, maintainable codebase
-- ✅ **API Routes** - RESTful endpoints for management
-- ✅ **Plugin System** - Extensible architecture for custom plugins
+**Operations**
+- Real-time console via Server-Sent Events, with level/instance/text filters
+- Health endpoint, structured logs, graceful shutdown that closes every socket
+- Optional bearer-token auth; CORS allowlist for split deployments
+- Docker image running as a non-root user with a healthcheck and a `/data` volume
 
 ---
 
-## 🛠️ Tech Stack
-
-### Frontend & UI
-| Technology | Purpose |
-|-----------|---------|
-| **React** | UI framework |
-| **Next.js** | Full-stack framework |
-| **Tailwind CSS** | Styling & design |
-
-### Backend & Runtime
-| Technology | Purpose |
-|-----------|---------|
-| **Node.js** | JavaScript runtime |
-| **Express** | Web framework |
-| **NPM** | Package management |
-
-### WhatsApp Integration
-| Technology | Purpose |
-|-----------|---------|
-| **WhatsApp Web API** | Message protocol |
-| **MD Protocol** | Multi-device support |
-| **QR Code Auth** | Secure authentication |
-
-### Database & Storage
-| Technology | Purpose |
-|-----------|---------|
-| **JSON/File Store** | Local data storage |
-| **Session Management** | Bot session persistence |
-
----
-
-## 📦 Prerequisites
-
-Before you begin, ensure you have the following installed on your system:
-
-### System Requirements
-- **Operating System**: Windows, macOS, or Linux
-- **RAM**: Minimum 2GB (4GB recommended for multiple bots)
-- **Storage**: At least 500MB free space
-- **Internet**: Stable, high-speed connection
-
-### Required Software
-- **Node.js** (v14.0.0 or higher) - [Download](https://nodejs.org/)
-- **NPM** (v6.0.0 or higher) - Included with Node.js
-- **Git** (optional, for cloning) - [Download](https://git-scm.com/)
-
-### Required Accounts & Access
-- **WhatsApp Account** - Working WhatsApp account with active phone number
-- **Phone Number** - For WhatsApp authentication via QR code
-- **Text Editor** - For configuration files (VS Code recommended)
-
----
-
-## 🚀 Installation
-
-### Step 1: Clone the Repository
+## Quick start
 
 ```bash
 git clone https://github.com/darksafari6/Whatsapp-MD-bot-Runner-Manager.git
 cd Whatsapp-MD-bot-Runner-Manager
-```
-
-Or download as ZIP and extract:
-```bash
-unzip Whatsapp-MD-bot-Runner-Manager.zip
-cd Whatsapp-MD-bot-Runner-Manager
-```
-
-### Step 2: Install Dependencies
-
-```bash
-npm install
-```
-
-**What gets installed:**
-- WhatsApp protocol handlers (Baileys/etc)
-- Express web server
-- React & Next.js framework
-- Database drivers
-- Utility libraries
-- Development tools
-
-### Step 3: Verify Installation
-
-```bash
-# Check Node.js version
-node --version
-# Output should be v14.0.0 or higher
-
-# Check NPM version
-npm --version
-# Output should be v6.0.0 or higher
-
-# Check installed packages
-npm list
-```
-
-### Step 4: Complete Setup
-
-```bash
-# Optional: Install additional optional dependencies
-npm install --save-dev nodemon
-
-# Verify everything works
-npm run dev
-```
-
----
-
-## ⚙️ Configuration
-
-### Basic Configuration (.env.local)
-
-Create a `.env.local` file in the project root:
-
-```bash
-touch .env.local
-```
-
-### Environment Variables
-
-Add these configurations to `.env.local`:
-
-```env
-# ============================================
-# SERVER CONFIGURATION
-# ============================================
-PORT=3000
-NODE_ENV=development
-HOST=0.0.0.0
-
-# ============================================
-# BOT SETTINGS
-# ============================================
-BOT_NAME=MyWhatsAppBot
-BOT_PREFIX=!
-AUTO_RESPONSE=true
-MAX_BOT_INSTANCES=5
-
-# ============================================
-# WHATSAPP CONFIGURATION
-# ============================================
-WHATSAPP_AUTO_RECONNECT=true
-WHATSAPP_RECONNECT_TIMEOUT=5000
-SESSION_STORAGE_PATH=./sessions
-
-# ============================================
-# MESSAGE HANDLING
-# ============================================
-MESSAGE_QUEUE_SIZE=1000
-MESSAGE_TIMEOUT=30000
-ENABLE_MEDIA_HANDLING=true
-
-# ============================================
-# LOGGING & DEBUGGING
-# ============================================
-LOG_LEVEL=info
-DEBUG_MODE=false
-SAVE_LOGS=true
-LOG_FILE_PATH=./logs
-
-# ============================================
-# SECURITY
-# ============================================
-ENABLE_MESSAGE_ENCRYPTION=true
-API_KEY=your_secret_key_here
-```
-
-### Advanced Configuration
-
-#### Bot Runner Configuration (`config/bots.json`)
-
-```json
-{
-  "bots": [
-    {
-      "id": "bot_001",
-      "name": "Support Bot",
-      "enabled": true,
-      "autoStart": true,
-      "settings": {
-        "prefix": "!",
-        "responseTimeout": 5000,
-        "maxRetries": 3
-      }
-    },
-    {
-      "id": "bot_002",
-      "name": "Notification Bot",
-      "enabled": true,
-      "autoStart": true,
-      "settings": {
-        "prefix": "~",
-        "responseTimeout": 10000,
-        "maxRetries": 2
-      }
-    }
-  ]
-}
-```
-
-#### Security Considerations
-
-⚠️ **IMPORTANT SECURITY NOTES:**
-
-1. **Never commit `.env.local` to version control**
-   ```bash
-   # Add to .gitignore
-   echo ".env.local" >> .gitignore
-   ```
-
-2. **Protect your API keys**
-   - Keep credentials private
-   - Use strong, random API keys
-   - Rotate keys regularly
-
-3. **Session Security**
-   - Store sessions in secure locations
-   - Clear old sessions periodically
-   - Use encryption for sensitive data
-
-4. **Rate Limiting**
-   - Implement request throttling
-   - Protect against abuse
-   - Monitor for suspicious activity
-
----
-
-## 🎮 Running the Project
-
-### Development Mode
-
-Start the development server with auto-reload:
-
-```bash
-npm run dev
-```
-
-**Expected Output:**
-```
-> Whatsapp-MD-bot-Runner-Manager@1.0.0 dev
-> next dev
-
-ready - started server on 0.0.0.0:3000, url: http://localhost:3000
-```
-
-Access the dashboard: `http://localhost:3000`
-
-### Production Mode
-
-Build and run for production:
-
-```bash
-# Build the project
-npm run build
-
-# Start production server
-npm start
-```
-
-### Available NPM Scripts
-
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start development server with hot reload |
-| `npm run build` | Create optimized production build |
-| `npm start` | Run production build |
-| `npm run lint` | Check code quality and style |
-| `npm test` | Run test suite |
-| `npm run format` | Format code with prettier |
-
-### Running Multiple Bot Instances
-
-```bash
-# Terminal 1: Start main server
-npm run dev
-
-# Terminal 2: Start additional bot runner (if supported)
-npm run start-bot -- --id bot_001
-
-# Terminal 3: Start another bot instance
-npm run start-bot -- --id bot_002
-```
-
----
-
-## 📁 Project Structure
-
-```
-Whatsapp-MD-bot-Runner-Manager/
-│
-├── 📄 Configuration Files
-│   ├── .env.local                    # Environment variables (DO NOT COMMIT)
-│   ├── .gitignore                    # Git ignore rules
-│   ├── package.json                  # Project dependencies
-│   ├── package-lock.json             # Dependency lock file
-│   └── README.md                     # This file
-│
-├── 📁 pages/                         # Next.js Application
-│   ├── api/                          # Backend API Routes
-│   │   ├── bots/                    # Bot management endpoints
-│   │   │   ├── start.js            # Start bot instance
-│   │   │   ├── stop.js             # Stop bot instance
-│   │   │   ├── status.js           # Get bot status
-│   │   │   └── list.js             # List all bots
-│   │   ├── messages/               # Message handling
-│   │   │   ├── send.js             # Send message
-│   │   │   ├── history.js          # Message history
-│   │   │   └── queue.js            # Message queue
-│   │   ├── sessions/               # Session management
-│   │   │   ├── create.js           # Create session
-│   │   │   ├── restore.js          # Restore session
-│   │   │   └── delete.js           # Delete session
-│   │   └── health.js               # Health check endpoint
-│   │
-│   ├── dashboard/                   # Dashboard Pages
-│   │   ├── index.js                # Main dashboard
-│   │   ├── bots.js                 # Bots management page
-│   │   ├── messages.js             # Messages page
-│   │   └── settings.js             # Settings page
-│   │
-│   ├── _app.js                     # App wrapper & global config
-│   ├── _document.js                # Document template
-│   └── index.js                    # Home page
-│
-├── 📁 components/                   # React Components
-│   ├── layouts/
-│   │   ├── MainLayout.jsx          # Main layout wrapper
-│   │   └── DashboardLayout.jsx     # Dashboard layout
-│   │
-│   ├── dashboard/
-│   │   ├── BotCard.jsx             # Bot status card
-│   │   ├── BotList.jsx             # Bot listing component
-│   │   ├── BotControls.jsx         # Bot control buttons
-│   │   ├── StatusIndicator.jsx     # Status display
-│   │   └── BotMetrics.jsx          # Bot statistics
-│   │
-│   ├── messages/
-│   │   ├── MessageInput.jsx        # Message input form
-│   │   ├── MessageDisplay.jsx      # Message viewer
-│   │   ├── ChatInterface.jsx       # Chat interface
-│   │   └── MessageHistory.jsx      # History viewer
-│   │
-│   ├── common/
-│   │   ├── Button.jsx              # Reusable button
-│   │   ├── Modal.jsx               # Modal dialog
-│   │   ├── Alert.jsx               # Alert component
-│   │   ├── Spinner.jsx             # Loading spinner
-│   │   └── Header.jsx              # Header component
-│   │
-│   └── settings/
-│       ├── SettingsForm.jsx        # Settings editor
-│       ├── BotConfig.jsx           # Bot configuration
-│       └── SecuritySettings.jsx    # Security settings
-│
-├── 📁 lib/                          # Utility Libraries
-│   ├── whatsapp/
-│   │   ├── client.js               # WhatsApp client
-│   │   ├── handlers.js             # Message handlers
-│   │   ├── auth.js                 # Authentication
-│   │   └── utils.js                # WhatsApp utilities
-│   │
-│   ├── botRunner/
-│   │   ├── manager.js              # Bot manager
-│   │   ├── runner.js               # Individual runner
-│   │   ├── scheduler.js            # Task scheduling
-│   │   └── logger.js               # Logging system
-│   │
-│   ├── api/
-│   │   ├── client.js               # API client
-│   │   └── endpoints.js            # API definitions
-│   │
-│   ├── database/
-│   │   ├── storage.js              # Data storage
-│   │   └── queries.js              # Query helpers
-│   │
-│   ├── utils/
-│   │   ├── helpers.js              # General helpers
-│   │   ├── validators.js           # Input validation
-│   │   ├── formatters.js           # Data formatting
-│   │   └── constants.js            # App constants
-│   │
-│   └── middleware/
-│       ├── auth.js                 # Authentication
-│       ├── errorHandler.js         # Error handling
-│       └── logger.js               # Request logging
-│
-├── 📁 public/                       # Static Assets
-│   ├── favicon.ico                 # Site favicon
-│   ├── robots.txt                  # SEO robots
-│   ├── images/
-│   │   ├── logo.png               # App logo
-│   │   └── banner.png             # Banner image
-│   └── styles/
-│       └── globals.css            # Global styles (if any)
-│
-├── 📁 styles/                       # CSS/Styling
-│   ├── globals.css                # Global styles
-│   ├── variables.css              # CSS variables
-│   ├── components/                # Component styles
-│   │   ├── dashboard.module.css   # Dashboard styles
-│   │   ├── messages.module.css    # Message styles
-│   │   └── buttons.module.css     # Button styles
-│   └── themes/
-│       ├── light.css              # Light theme
-│       └── dark.css               # Dark theme
-│
-├── 📁 config/                       # Configuration Files
-│   ├── bots.json                  # Bot configuration
-│   ├── commands.json              # Command definitions
-│   └── webhooks.json              # Webhook settings
-│
-├── 📁 sessions/                     # WhatsApp Sessions (Generated)
-│   ├── bot_001/
-│   └── bot_002/
-│
-├── 📁 logs/                         # Application Logs (Generated)
-│   ├── app.log                    # General logs
-│   ├── errors.log                 # Error logs
-│   └── whatsapp.log               # WhatsApp logs
-│
-└── 📁 scripts/                      # Utility Scripts
-    ├── setup.js                   # Setup script
-    ├── migrate.js                 # Data migration
-    └── cleanup.js                 # Cleanup script
-```
-
----
-
-## 🏗️ Bot Runner Architecture
-
-### System Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────┐
-│          WhatsApp MD Bot Runner Manager                 │
-├─────────────────────────────────────────────────────────┤
-│                                                          │
-│  ┌────────────────┐                                     │
-│  │  Dashboard UI  │ ← React Components                  │
-│  └────────┬───────┘                                     │
-│           │                                              │
-│  ┌────────▼────────────────────────────────────┐       │
-│  │   Next.js API Routes & Server                │       │
-│  │  (Message Handler, Bot Manager, etc)         │       │
-│  └────────┬────────────────────────────────────���┘       │
-│           │                                              │
-│  ┌────────▼──────────────────────────────────┐         │
-│  │   Bot Runner Manager                      │         │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐  │         │
-│  │  │ Bot #1   │ │ Bot #2   │ │ Bot #N   │  │         │
-│  │  └──────────┘ └──────────┘ └──────────┘  │         │
-│  └────────┬──────────────────────────────────┘         │
-│           │                                              │
-│  ┌────────▼────────────────────────────────────┐       │
-│  │  WhatsApp Protocol Handler (MD)             │       │
-│  │  ├─ Message Processing                     │       │
-│  │  ├─ QR Code Authentication                 │       │
-│  │  ├─ Session Management                     │       │
-│  │  └─ Contact & Group Management             │       │
-│  └────────┬─────────────────────────────────────┘       │
-│           │                                              │
-│  ┌────────▼──────────────────────────────────────┐     │
-│  │      WhatsApp Web Infrastructure             │     │
-│  └──────────────────────────────────────────────┘     │
-│                                                          │
-└─────────────────────────────────────────────────────────┘
-```
-
-### Bot Runner Lifecycle
-
-```
-START
-  │
-  ├─→ Load Configuration
-  │
-  ├─→ Initialize WhatsApp Client
-  │
-  ├─→ Generate/Scan QR Code
-  │
-  ├─→ Authenticate Session
-  │
-  ├─→ Load Message Handlers
-  │
-  ├─→ Start Message Listener
-  │
-  └─→ RUNNING (Accept Messages)
-      │
-      ├─→ Process Incoming Messages
-      │
-      ├─→ Execute Commands
-      │
-      ├─→ Send Responses
-      │
-      └─→ STOP (on command or error)
-```
-
----
-
-## 💬 WhatsApp Integration
-
-### Message Flow
-
-```
-WhatsApp Server
-      ↓
-   MD Protocol
-      ↓
-Bot Client (WhatsApp Web)
-      ↓
-Message Handler
-      ↓
-Command Parser
-      ↓
-Response Generator
-      ↓
-Message Sender
-      ↓
-WhatsApp Server
-```
-
-### Supported Message Types
-
-| Type | Support | Description |
-|------|---------|-------------|
-| Text | ✅ | Plain text messages |
-| Image | ✅ | Image media files |
-| Video | ✅ | Video files |
-| Audio | ✅ | Audio/voice messages |
-| Document | ✅ | File attachments |
-| Groups | ✅ | Group chat messages |
-| Status | ✅ | Status updates |
-
----
-
-## 💬 Usage Guide
-
-### Starting Your First Bot
-
-#### Step 1: Start the Server
-```bash
-npm run dev
-```
-
-#### Step 2: Access Dashboard
-Open browser: `http://localhost:3000`
-
-#### Step 3: Create New Bot Instance
-1. Click "New Bot" button
-2. Enter bot name and settings
-3. Click "Create"
-
-#### Step 4: Authenticate with WhatsApp
-1. QR code will appear on screen
-2. Open WhatsApp on your phone
-3. Go to Settings → Linked Devices
-4. Scan the QR code
-5. Bot will authenticate automatically
-
-#### Step 5: Send Test Message
-1. Message the bot's WhatsApp number
-2. Bot will respond with confirmation
-3. You can now use bot commands
-
-### Managing Bot Instances
-
-#### View All Bots
-```bash
-# Via API
-curl http://localhost:3000/api/bots/list
-
-# Response:
-{
-  "bots": [
-    {
-      "id": "bot_001",
-      "name": "Support Bot",
-      "status": "running",
-      "uptime": "2h 30m"
-    }
-  ]
-}
-```
-
-#### Start a Bot
-```bash
-curl -X POST http://localhost:3000/api/bots/start \
-  -H "Content-Type: application/json" \
-  -d '{"botId": "bot_001"}'
-```
-
-#### Stop a Bot
-```bash
-curl -X POST http://localhost:3000/api/bots/stop \
-  -H "Content-Type: application/json" \
-  -d '{"botId": "bot_001"}'
-```
-
-#### Get Bot Status
-```bash
-curl http://localhost:3000/api/bots/status?botId=bot_001
-```
-
-### Creating Custom Commands
-
-Create a file `lib/botRunner/commands.js`:
-
-```javascript
-module.exports = {
-  // Help command
-  help: {
-    handler: async (message) => {
-      return "Available commands: !help, !info, !status";
-    }
-  },
-  
-  // Custom greeting
-  hello: {
-    handler: async (message) => {
-      return "Hello! How can I help you today?";
-    }
-  },
-  
-  // Echo command
-  echo: {
-    handler: async (message, args) => {
-      return args.join(" ");
-    }
-  }
-};
-```
-
----
-
-## 🔌 API Documentation
-
-### Authentication
-
-All API requests should include authorization:
-
-```bash
-curl -H "Authorization: Bearer YOUR_API_KEY" \
-  http://localhost:3000/api/bots/list
-```
-
-### Available Endpoints
-
-#### Bot Management
-
-**List All Bots**
-```
-GET /api/bots/list
-```
-
-**Get Bot Details**
-```
-GET /api/bots/:botId
-```
-
-**Create New Bot**
-```
-POST /api/bots/create
-Body: { name, prefix, settings }
-```
-
-**Start Bot**
-```
-POST /api/bots/start
-Body: { botId }
-```
-
-**Stop Bot**
-```
-POST /api/bots/stop
-Body: { botId }
-```
-
-#### Message API
-
-**Send Message**
-```
-POST /api/messages/send
-Body: { botId, to, message }
-```
-
-**Get Message History**
-```
-GET /api/messages/history?botId=ID&limit=50
-```
-
-**Clear Message Queue**
-```
-POST /api/messages/queue/clear
-Body: { botId }
-```
-
-#### Sessions
-
-**Create Session**
-```
-POST /api/sessions/create
-Body: { botId }
-```
-
-**Get Session**
-```
-GET /api/sessions/:sessionId
-```
-
-**Delete Session**
-```
-POST /api/sessions/delete
-Body: { sessionId }
-```
-
----
-
-## 🐛 Troubleshooting
-
-### Common Issues & Solutions
-
-#### Issue 1: "Cannot find module 'whatsapp-web.js'"
-
-**Solution:**
-```bash
-# Reinstall dependencies
-rm -rf node_modules package-lock.json
 npm install
 npm run dev
 ```
 
-#### Issue 2: "QR Code not appearing"
+`npm run dev` starts two processes:
 
-**Causes & Solutions:**
-1. Browser compatibility issue
-   - Try Chrome/Edge instead of Firefox
-   - Clear browser cache
+| Process | URL | Notes |
+|---|---|---|
+| API + Baileys runtime | http://localhost:3001 | `tsx watch` |
+| UI dev server | http://localhost:5173 | Vite, proxies `/api` to the API |
 
-2. Server not running
-   - Verify server started: `npm run dev`
-   - Check port 3000 is available
+Open **http://localhost:5173**, click **New bot**, press **Start**, then scan the QR code or
+request a pairing code.
 
-3. Port already in use
-   ```bash
-   # Find and kill process on port 3000
-   lsof -ti:3000 | xargs kill -9
-   npm run dev
-   ```
+### Production
 
-#### Issue 3: "WhatsApp session keeps disconnecting"
-
-**Solutions:**
-1. Check internet connection stability
-2. Verify phone has stable connection
-3. Don't use account on multiple devices
-4. Restart bot: Stop → Wait 5s → Start
-
-#### Issue 4: "Messages not being sent"
-
-**Debug Steps:**
-1. Check bot is running
-   ```bash
-   curl http://localhost:3000/api/bots/status
-   ```
-
-2. Verify recipient number format
-   - Use format: `+1234567890`
-   - Include country code
-
-3. Check message queue
-   ```bash
-   curl http://localhost:3000/api/messages/queue
-   ```
-
-4. Review logs
-   ```bash
-   cat logs/app.log
-   cat logs/errors.log
-   ```
-
-#### Issue 5: "Bot not responding to commands"
-
-**Solutions:**
-1. Check command prefix in config
-2. Ensure bot has message handlers
-3. Review command file syntax
-4. Check message log for errors
-
-#### Issue 6: "High CPU/Memory usage"
-
-**Optimization:**
-1. Limit max bot instances
-2. Implement message rate limiting
-3. Clear old logs and sessions
-   ```bash
-   rm -rf logs/* sessions/*/
-   ```
-4. Monitor resource usage
-   ```bash
-   npm run monitor
-   ```
-
-### Getting Help
-
-1. **Check Logs**
-   ```bash
-   tail -f logs/app.log
-   tail -f logs/errors.log
-   ```
-
-2. **Enable Debug Mode**
-   ```env
-   DEBUG_MODE=true
-   LOG_LEVEL=debug
-   ```
-
-3. **Restart Everything**
-   ```bash
-   npm run dev
-   ```
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! Here's how to contribute:
-
-### Fork & Clone
 ```bash
-# Fork the repo on GitHub
-# Then clone your fork
-git clone https://github.com/YOUR_USERNAME/Whatsapp-MD-bot-Runner-Manager.git
-cd Whatsapp-MD-bot-Runner-Manager
+npm run build     # bundles the UI into dist/ and the server into dist-server/
+npm start         # single process on :3001 serving both API and UI
 ```
 
-### Create Feature Branch
+### Docker
+
 ```bash
-git checkout -b feature/amazing-feature
+docker compose up -d --build
+# or
+docker build -t wamanager .
+docker run -d -p 3001:3001 -v wamanager-data:/data -e API_TOKEN=change-me wamanager
 ```
 
-### Make Changes & Commit
+The `wamanager-data` volume holds WhatsApp credentials. Lose it and every bot must be relinked.
+
+---
+
+## Configuration
+
+Copy `.env.example` to `.env`. Everything is optional.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `3001` | HTTP port |
+| `HOST` | `0.0.0.0` | Bind address (`127.0.0.1` for loopback-only) |
+| `API_TOKEN` | *empty* | When set, every `/api` request needs `Authorization: Bearer <token>` |
+| `WAMANAGER_DATA_DIR` | `./data` | Sessions + `state.json` |
+| `MAX_INSTANCES` | `10` | Hard cap on concurrent WhatsApp sockets |
+| `LOG_BUFFER` | `2000` | In-memory log ring size |
+| `LOG_LEVEL` | `info` | Manager verbosity |
+| `BAILEYS_LOG_LEVEL` | `silent` | Baileys' own logging (`error`/`warn` for debugging) |
+| `CORS_ORIGINS` | *empty* | Comma-separated extra origins allowed to call the API |
+
+> ⚠️ **Security:** with `API_TOKEN` unset the panel is open to anyone who can reach the port.
+> That is fine on `127.0.0.1`; set a token before exposing it to a network or the internet.
+> Whoever can reach this panel controls the linked WhatsApp accounts.
+
+---
+
+## API
+
+All routes are under `/api`. Errors return `{ "error": "..." }`.
+
+| Method | Route | Description |
+|---|---|---|
+| `GET` | `/health` | Version, uptime, instance counts |
+| `GET` | `/instances` | List bots (includes live QR when pending) |
+| `POST` | `/instances` | Create a bot — body `{ "name": "Support" }` |
+| `GET` | `/instances/:id` | Single bot |
+| `PATCH` | `/instances/:id` | Update `name`, `config`, `commands` |
+| `DELETE` | `/instances/:id` | Stop and delete |
+| `POST` | `/instances/:id/start` | Open the socket |
+| `POST` | `/instances/:id/stop` | Close the socket, keep the session |
+| `POST` | `/instances/:id/restart` | Stop then start |
+| `POST` | `/instances/:id/logout` | Unlink device and delete credentials |
+| `GET` | `/instances/:id/qr` | Current QR + pairing code |
+| `POST` | `/instances/:id/pairing-code` | Body `{ "phoneNumber": "92300…" }` |
+| `GET` | `/logs?limit=&instanceId=` | Recent log lines |
+| `GET` | `/logs/stream` | SSE stream (`?token=` for EventSource) |
+| `POST` | `/logs/clear` | Clear the ring buffer |
+| `GET`/`PATCH` | `/settings` | Manager preferences |
+
 ```bash
-git add .
-git commit -m "Add amazing feature: description of changes"
+curl -X POST localhost:3001/api/instances \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Support Bot"}'
+
+curl -X POST localhost:3001/api/instances/support-bot/start
+
+curl -X PATCH localhost:3001/api/instances/support-bot \
+  -H 'Content-Type: application/json' \
+  -d '{"commands":[{"name":"hours","response":"We are open 9–5, {{sender}}."}]}'
 ```
 
-### Push to GitHub
+---
+
+## Project layout
+
+```
+├── shared/types.ts          # Types shared by server and UI (single source of truth)
+├── server/
+│   ├── index.ts             # Express bootstrap, static UI, graceful shutdown
+│   ├── api.ts               # REST routes + validation
+│   ├── runtime.ts           # Baileys socket lifecycle, reconnects, message dispatch
+│   ├── commands.ts          # Pure command matching + template rendering (unit tested)
+│   ├── store.ts             # Atomic JSON persistence + normalisation
+│   ├── logger.ts            # Ring buffer + SSE fan-out
+│   ├── auth.ts              # Optional token auth, rate limiting
+│   ├── baileys-logger.ts    # pino-compatible adapter that redacts QR/creds
+│   └── config.ts            # Environment parsing
+├── src/
+│   ├── App.tsx              # Shell, hash routing, token gate, toasts
+│   ├── state/AppStore.tsx   # Data layer (polling + SSE)
+│   ├── views/               # Dashboard, InstanceDetail, Settings
+│   ├── components/          # Cards, console, connect panel, command/config editors
+│   └── lib/                 # API client, formatting helpers
+├── electron/                # Hardened desktop shell (contextIsolation, sandbox)
+├── test/                    # Vitest: server logic + jsdom component tests
+└── scripts/                 # dev runner + esbuild server bundler
+```
+
+---
+
+## Development
+
 ```bash
-git push origin feature/amazing-feature
+npm run dev          # API + UI with hot reload
+npm run typecheck    # tsc --noEmit (strict)
+npm test             # 36 tests
+npm run format       # prettier
+npm run build        # production bundle
+npm start            # run the production bundle
 ```
 
-### Open Pull Request
-1. Go to original repository
-2. Click "New Pull Request"
-3. Select your branch
-4. Describe your changes
-5. Submit PR
-
-### Code Guidelines
-
-- **Follow existing code style**
-- **Add comments for complex logic**
-- **Test your changes thoroughly**
-- **Update documentation**
-- **Keep commits atomic**
-
-### Areas for Contribution
-
-- 🐛 Bug fixes
-- ✨ New features
-- 📚 Documentation improvements
-- 🎨 UI/UX enhancements
-- 🔒 Security improvements
-- ⚡ Performance optimization
+CI (`.github/workflows/ci.yml`) typechecks, tests, builds and smoke-tests `/api/health`
+on every push and pull request.
 
 ---
 
-## 📄 License
+## Troubleshooting
 
-This project is licensed under the **MIT License**.
+**“Cannot reach WhatsApp servers … TLS / network socket”**
+The host running the manager cannot open a TLS connection to WhatsApp. Check outbound HTTPS,
+DNS, corporate proxies and IPv6. This is the most common reason a container fails to link.
 
-```
-MIT License
+**QR appears and immediately expires**
+WhatsApp rotates QR codes roughly every 20 seconds. The panel refetches automatically; if it
+keeps rotating, your clock may be skewed — sync NTP.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+**`Device was unlinked`**
+Someone removed the linked device, or WhatsApp invalidated the session. The manager deletes the
+dead credentials; press Start and scan again.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-```
+**`Port 3001 is already in use`**
+Set `PORT` in `.env`, or stop the other process.
 
----
-
-## 📞 Support & Contact
-
-- **GitHub Issues**: [Report Issues](https://github.com/darksafari6/Whatsapp-MD-bot-Runner-Manager/issues)
-- **Discussions**: [Join Discussions](https://github.com/darksafari6/Whatsapp-MD-bot-Runner-Manager/discussions)
-- **Email**: Contact via GitHub profile
+**Bots stop after a host reboot**
+Set `autostartConnectedInstances` (Settings) and run the manager as a service
+(`docker compose` with `restart: unless-stopped`, or a systemd unit).
 
 ---
 
-## 🙏 Acknowledgments
+## Limitations & responsible use
 
-- **WhatsApp** - For the WhatsApp platform and MD protocol
-- **Baileys Library** - For WhatsApp protocol implementation
-- **Node.js & NPM** - For amazing runtime and package management
-- **Open Source Community** - For countless libraries and tools
-- **All Contributors** - For making this project better
+- Baileys is an **unofficial** WhatsApp Web client. Automating WhatsApp can get a number
+  **banned**; use a dedicated number and human-like volumes.
+- This manager runs bots **in one process**. For hundreds of instances, run several managers
+  behind a reverse proxy with separate data volumes.
+- Logs are in memory only; pipe stdout to your log stack if you need retention.
+- Not affiliated with, endorsed by, or supported by WhatsApp or Meta.
 
----
+## License
 
-## 📈 Project Statistics
+MIT — see [LICENSE](LICENSE).
 
-- **GitHub Stars**: ⭐ [Give us a star!](https://github.com/darksafari6/Whatsapp-MD-bot-Runner-Manager)
-- **Contributors**: 👥 [Contribute to the project](#contributing)
-- **Last Updated**: June 2024
-- **Status**: ✅ Active Development
+## Acknowledgements
 
----
-
-## 🔗 Related Resources
-
-- [Node.js Documentation](https://nodejs.org/docs)
-- [Next.js Guide](https://nextjs.org/docs)
-- [React Documentation](https://react.dev)
-- [WhatsApp Developer Info](https://www.whatsapp.com/business/developers)
-- [GitHub Guides](https://guides.github.com)
-
----
-
-<div align="center">
-
-**WhatsApp MD Bot Runner Manager**
-
-Made with ❤️ by the community
-
-[⭐ Star us on GitHub](https://github.com/darksafari6/Whatsapp-MD-bot-Runner-Manager)
-
-</div>
+Built on [Baileys](https://github.com/WhiskeySockets/Baileys), React, Vite, Tailwind CSS and
+Express.

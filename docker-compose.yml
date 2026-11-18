@@ -1,0 +1,29 @@
+services:
+  manager:
+    build: .
+    image: whatsapp-md-bot-runner-manager:latest
+    container_name: wamanager
+    restart: unless-stopped
+    ports:
+      - '3001:3001'
+    environment:
+      # Strongly recommended when the port is reachable by anyone else.
+      API_TOKEN: ${API_TOKEN:-}
+      MAX_INSTANCES: ${MAX_INSTANCES:-10}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      BAILEYS_LOG_LEVEL: ${BAILEYS_LOG_LEVEL:-silent}
+    volumes:
+      # Session credentials + state.json. Losing this volume logs every bot out.
+      - wamanager-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  wamanager-data:

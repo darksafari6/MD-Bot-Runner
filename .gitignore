@@ -1,8 +1,21 @@
 node_modules/
-build/
 dist/
+dist-server/
+build/
 coverage/
-.DS_Store
 *.log
-.env*
+
+# Runtime data: WhatsApp credentials are secrets — never commit them.
+data/
+sessions/
+.env
+.env.*
 !.env.example
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.tsbuildinfo
+playwright-report/
+test-results/

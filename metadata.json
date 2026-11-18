@@ -1,6 +1,0 @@
-{
-  "name": "WhatsApp Bot Manager",
-  "description": "An Electron-ready desktop application written in React to manage and run WhatsApp Multi-Device (MD) bots.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
