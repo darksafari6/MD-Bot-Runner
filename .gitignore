@@ -1,21 +1,29 @@
-node_modules/
-dist/
-dist-server/
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.Python
 build/
-coverage/
-*.log
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
-# Runtime data: WhatsApp credentials are secrets — never commit them.
+# Runtime data: WhatsApp credentials and message history are secrets.
 data/
 sessions/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Local configuration
 .env
 .env.*
 !.env.example
 
 .DS_Store
-Thumbs.db
-.vscode/
-.idea/
-*.tsbuildinfo
-playwright-report/
-test-results/
+*.log

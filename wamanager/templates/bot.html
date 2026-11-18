@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+{% block title %}{{ bot.name }} · Bot Runner{% endblock %}
+
+{% block content %}
+<section class="headline">
+  <div>
+    <h1>
+      {{ bot.name }}
+      <span class="status status-{{ bot.status }}">{{ bot.status | replace('_', ' ') }}</span>
+    </h1>
+    <p class="muted mono small">
+      {% if bot.identity_number %}+{{ bot.identity_number }}{% else %}{{ bot.id }}{% endif %}
+    </p>
+  </div>
+  <div class="actions">
+    <a class="btn ghost" href="/">← Dashboard</a>
+    {% if bot.status in ('stopped', 'error', 'logged_out') %}
+    <button class="btn primary" hx-post="/ui/bots/{{ bot.id }}/start" hx-target="#bot-grid" hx-swap="none">Start</button>
+    {% else %}
+    <button class="btn" hx-post="/ui/bots/{{ bot.id }}/restart" hx-target="#bot-grid" hx-swap="none">Restart</button>
+    <button class="btn" hx-post="/ui/bots/{{ bot.id }}/stop" hx-target="#bot-grid" hx-swap="none">Stop</button>
+    {% endif %}
+    <button
+      class="btn danger"
+      hx-post="/ui/bots/{{ bot.id }}/logout"
+      hx-swap="none"
+      hx-confirm="Unlink this WhatsApp device?"
+    >Unlink</button>
+  </div>
+</section>
+
+<nav class="tabs">
+  {% for key, label in [('overview','Overview'), ('inbox','Inbox'), ('commands','Commands'), ('behaviour','Behaviour'), ('ai','AI')] %}
+  <a class="tab {{ 'active' if tab == key else '' }}" href="/bots/{{ bot.id }}?tab={{ key }}">{{ label }}</a>
+  {% endfor %}
+</nav>
+
+{% if bot.last_error %}
+<p class="error-line">{{ bot.last_error }}</p>
+{% endif %}
+
+{% if tab == 'overview' %}
+<section class="two-col">
+  <div class="panel">
+    <h2>Connection</h2>
+    {% if bot.status in ('qr', 'pairing') %}
+      {% include "partials/qr.html" with context %}
+      <form class="stack" hx-post="/api/bots/{{ bot.id }}/pairing-code" hx-swap="none">
+        <label class="field">
+          <span>Link with a phone number instead</span>
+          <input name="phone" placeholder="923001234567" inputmode="tel" />
+        </label>
+        <button class="btn" type="submit">Request pairing code</button>
+        <p class="muted small">Uses the API form field <code>phone</code>; the code appears above.</p>
+      </form>
+    {% elif bot.status == 'connected' %}
+      <p class="ok">Connected as {{ bot.identity_name or bot.identity_number or 'linked device' }}.</p>
+      <p class="muted small">Commands and AI replies are live for this bot.</p>
+    {% else %}
+      <p class="muted">This bot is not connected. Press Start to open a WhatsApp session.</p>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>Health</h2>
+    <dl class="kv">
+      <div><dt>Messages in</dt><dd>{{ bot.stats.messages_in }}</dd></div>
+      <div><dt>Messages out</dt><dd>{{ bot.stats.messages_out }}</dd></div>
+      <div><dt>Commands handled</dt><dd>{{ bot.stats.commands_handled }}</dd></div>
+      <div><dt>AI replies</dt><dd>{{ bot.stats.ai_replies }}</dd></div>
+      <div><dt>Errors</dt><dd>{{ bot.stats.errors }}</dd></div>
+      <div><dt>Outbound quota</dt><dd>{{ throttle.remaining }}/{{ throttle.limit }} per min</dd></div>
+      <div><dt>AI spend (tokens)</dt><dd>{{ usage.today_tokens }} today · {{ usage.prompt_tokens + usage.output_tokens }} total</dd></div>
+      <div><dt>AI failures</dt><dd>{{ usage.failures }}</dd></div>
+    </dl>
+  </div>
+</section>
+
+{% elif tab == 'inbox' %}
+<section class="inbox">
+  <aside class="panel chat-list">
+    <h2>Chats</h2>
+    {% for chat in conversations %}
+    <a class="chat-item {{ 'selected' if selected == chat.chat_jid else '' }}"
+       href="/bots/{{ bot.id }}?tab=inbox&chat={{ chat.chat_jid }}">
+      <span class="chat-name">{{ chat.chat_name }}{% if chat.is_group %} · group{% endif %}</span>
+      <span class="muted small truncate">{{ chat.last_body }}</span>
+    </a>
+    {% else %}
+    <p class="muted small">No conversations yet.</p>
+    {% endfor %}
+  </aside>
+
+  <div class="panel">
+    <div id="transcript">
+      {% include "partials/transcript.html" with context %}
+    </div>
+    <form
+      class="composer"
+      hx-post="/ui/bots/{{ bot.id }}/send"
+      hx-target="#transcript"
+      hx-swap="innerHTML"
+      hx-on::after-request="this.reset()"
+    >
+      <input type="hidden" name="chat_jid" value="{{ selected or '' }}" />
+      <input
+        name="to"
+        placeholder="Recipient (+923001234567 or 123456@g.us)"
+        value="{{ selected or '' }}"
+        required
+      />
+      <textarea name="text" rows="2" placeholder="Type a message…" required maxlength="4096"></textarea>
+      <button class="btn primary" type="submit" {% if bot.status != 'connected' %}disabled{% endif %}>
+        Send
+      </button>
+    </form>
+    {% if bot.status != 'connected' %}
+    <p class="muted small">Start and link this bot before sending.</p>
+    {% endif %}
+  </div>
+</section>
+
+{% elif tab == 'commands' %}
+<section class="panel">
+  <h2>Commands</h2>
+  <p class="muted small">
+    Messages starting with <code>{{ bot.command_prefix }}</code> trigger these.
+    Placeholders: {{ '{{sender}}' }} {{ '{{args}}' }} {{ '{{bot}}' }} {{ '{{uptime}}' }} {{ '{{commands}}' }}.
+  </p>
+  <form method="post" action="/bots/{{ bot.id }}/commands" class="stack">
+    <table class="table">
+      <thead>
+        <tr><th>Name</th><th>Response</th><th>On</th><th>Exact</th></tr>
+      </thead>
+      <tbody>
+        {% for cmd in bot.commands %}
+        <tr>
+          <td><input class="mono" name="name[]" value="{{ cmd.name }}" /></td>
+          <td><textarea name="response[]" rows="2">{{ cmd.response }}</textarea></td>
+          <td><input type="checkbox" name="enabled[]" {{ 'checked' if cmd.enabled }} /></td>
+          <td><input type="checkbox" name="exact[]" {{ 'checked' if cmd.exact }} /></td>
+        </tr>
+        {% endfor %}
+        <tr class="new-row">
+          <td><input class="mono" name="name[]" placeholder="newcmd" /></td>
+          <td><textarea name="response[]" rows="2" placeholder="Reply text…"></textarea></td>
+          <td><input type="checkbox" name="enabled[]" checked /></td>
+          <td><input type="checkbox" name="exact[]" /></td>
+        </tr>
+      </tbody>
+    </table>
+    <button class="btn primary" type="submit">Save commands</button>
+  </form>
+</section>
+
+{% elif tab == 'behaviour' %}
+<section class="panel">
+  <h2>Behaviour</h2>
+  <form method="post" action="/bots/{{ bot.id }}/behaviour" class="stack">
+    <label class="field"><span>Display name</span><input name="name" value="{{ bot.name }}" maxlength="60" /></label>
+    <label class="field"><span>Command prefix</span><input class="mono" name="command_prefix" value="{{ bot.command_prefix }}" maxlength="3" /></label>
+
+    <div class="toggle-grid">
+      <label class="toggle"><input type="checkbox" name="respond_to_groups" {{ 'checked' if bot.config.respond_to_groups }} /> Reply in groups</label>
+      <label class="toggle"><input type="checkbox" name="respond_to_dms" {{ 'checked' if bot.config.respond_to_dms }} /> Reply in direct chats</label>
+      <label class="toggle"><input type="checkbox" name="auto_read" {{ 'checked' if bot.config.auto_read }} /> Mark messages read</label>
+      <label class="toggle"><input type="checkbox" name="typing_indicator" {{ 'checked' if bot.config.typing_indicator }} /> Show typing indicator</label>
+    </div>
+
+    <fieldset class="group">
+      <legend>Outbound pacing (ban safety)</legend>
+      <p class="muted small">Per minute: {{ limits.min_per_minute }}–{{ limits.max_per_minute }} · gap: {{ limits.min_gap_ms }}–{{ limits.max_gap_ms }} ms</p>
+      <div class="row">
+        <label class="field"><span>Max per minute</span><input type="number" name="outbound_per_minute" value="{{ bot.config.outbound_per_minute }}" /></label>
+        <label class="field"><span>Minimum gap (ms)</span><input type="number" name="outbound_min_gap_ms" value="{{ bot.config.outbound_min_gap_ms }}" /></label>
+      </div>
+    </fieldset>
+
+    <label class="field"><span>Allowlist (digits, comma separated — empty means everyone)</span>
+      <input name="allowed_numbers" value="{{ bot.config.allowed_numbers | join(', ') }}" /></label>
+    <label class="field"><span>Blocklist</span>
+      <input name="blocked_numbers" value="{{ bot.config.blocked_numbers | join(', ') }}" /></label>
+
+    <button class="btn primary" type="submit">Save behaviour</button>
+  </form>
+</section>
+
+{% elif tab == 'ai' %}
+<section class="two-col">
+  <div class="panel">
+    <h2>AI replies</h2>
+    {% if not ai_configured %}
+    <p class="error-line">
+      No AI provider configured. Set <code>AI_BASE_URL</code> + <code>AI_API_KEY</code> in
+      <code>.env</code>, or fill in the fields below (works with Ollama: base URL
+      <code>http://127.0.0.1:11434/v1</code>).
+    </p>
+    {% endif %}
+    <form method="post" action="/bots/{{ bot.id }}/ai" class="stack">
+      <label class="toggle"><input type="checkbox" name="ai_enabled" {{ 'checked' if bot.config.ai_enabled }} /> Enable AI replies for this bot</label>
+      <label class="toggle"><input type="checkbox" name="ai_in_groups" {{ 'checked' if bot.config.get('ai_in_groups') }} /> Also answer in groups</label>
+      <label class="field"><span>Model</span><input class="mono" name="ai_model" value="{{ bot.config.ai_model or '' }}" placeholder="gpt-4o-mini / llama3.1" /></label>
+      <label class="field"><span>Base URL (OpenAI-compatible)</span><input class="mono" name="ai_base_url" value="{{ bot.config.ai_base_url or '' }}" placeholder="http://127.0.0.1:11434/v1" /></label>
+      <label class="field"><span>Persona / system prompt</span><textarea name="ai_persona" rows="4">{{ bot.config.ai_persona or '' }}</textarea></label>
+      <label class="field"><span>Conversation memory (turns)</span><input type="number" name="ai_history_turns" value="{{ bot.config.ai_history_turns }}" min="0" max="30" /></label>
+      <button class="btn primary" type="submit">Save AI settings</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>Provider check</h2>
+    <p class="muted small">Sends one real request so you can prove the key works.</p>
+    <button class="btn" hx-post="/ui/bots/{{ bot.id }}/ai-check" hx-target="#ai-check" hx-swap="innerHTML">
+      Test provider
+    </button>
+    <div id="ai-check" class="small"></div>
+
+    <h2 class="spaced">Usage</h2>
+    <dl class="kv">
+      <div><dt>Calls</dt><dd>{{ usage.calls }}</dd></div>
+      <div><dt>Prompt tokens</dt><dd>{{ usage.prompt_tokens }}</dd></div>
+      <div><dt>Output tokens</dt><dd>{{ usage.output_tokens }}</dd></div>
+      <div><dt>Failures</dt><dd>{{ usage.failures }}</dd></div>
+    </dl>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

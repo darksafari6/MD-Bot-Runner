@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Bot Runner{% endblock %}
+
+{% block content %}
+<section class="headline">
+  <div>
+    <h1>Dashboard</h1>
+    <p class="muted">
+      {{ engine.total }} bot{{ '' if engine.total == 1 else 's' }} ·
+      {{ engine.connected }} connected · {{ engine.live }}/{{ engine.limit }} running
+    </p>
+  </div>
+  <form
+    class="inline-form"
+    hx-post="/ui/bots"
+    hx-target="#bot-grid"
+    hx-swap="innerHTML"
+    hx-on::after-request="this.reset()"
+  >
+    <input name="name" placeholder="New bot name" maxlength="60" required />
+    <button class="btn primary" type="submit">Create bot</button>
+  </form>
+</section>
+
+<section id="bot-grid" class="grid" hx-get="/partials/bots" hx-trigger="every 6s" hx-swap="innerHTML">
+  {% include "partials/bot_list.html" %}
+</section>
+
+<section class="panel">
+  <h2>How linking works</h2>
+  <ol class="steps">
+    <li>Create a bot, then press <strong>Start</strong>. A real WhatsApp Web socket opens.</li>
+    <li>Scan the QR code, or request a pairing code for your number.</li>
+    <li>Once connected, commands and (optionally) AI replies are live.</li>
+  </ol>
+  <p class="muted small">
+    Nothing here is simulated: if WhatsApp is unreachable the bot shows the actual error.
+  </p>
+</section>
+{% endblock %}

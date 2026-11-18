@@ -1,0 +1,46 @@
+<div class="grid">
+  {% for bot in bots %}
+  <article class="card bot-card">
+    <header class="bot-head">
+      <a class="bot-name" href="/bots/{{ bot.id }}">{{ bot.name }}</a>
+      <span class="status status-{{ bot.status }}">{{ bot.status | replace('_', ' ') }}</span>
+    </header>
+
+    <p class="muted small mono">
+      {% if bot.identity_number %}+{{ bot.identity_number }}{% else %}{{ bot.id }}{% endif %}
+    </p>
+
+    <dl class="metrics">
+      <div><dt>In</dt><dd>{{ bot.stats.messages_in }}</dd></div>
+      <div><dt>Out</dt><dd>{{ bot.stats.messages_out }}</dd></div>
+      <div><dt>Commands</dt><dd>{{ bot.stats.commands_handled }}</dd></div>
+    </dl>
+
+    {% if bot.last_error %}
+    <p class="error-line small">{{ bot.last_error }}</p>
+    {% endif %}
+
+    <div class="actions">
+      {% if bot.status in ('stopped', 'error', 'logged_out') %}
+      <button class="btn primary" hx-post="/ui/bots/{{ bot.id }}/start" hx-target="#bot-grid" hx-swap="innerHTML">Start</button>
+      {% else %}
+      <button class="btn" hx-post="/ui/bots/{{ bot.id }}/stop" hx-target="#bot-grid" hx-swap="innerHTML">Stop</button>
+      <button class="btn" hx-post="/ui/bots/{{ bot.id }}/restart" hx-target="#bot-grid" hx-swap="innerHTML">Restart</button>
+      {% endif %}
+      <a class="btn ghost" href="/bots/{{ bot.id }}">Open</a>
+      <button
+        class="btn danger"
+        hx-post="/ui/bots/{{ bot.id }}/logout"
+        hx-target="#bot-grid"
+        hx-swap="innerHTML"
+        hx-confirm="Unlink the WhatsApp device for {{ bot.name }}? You will need to scan again."
+      >Unlink</button>
+    </div>
+  </article>
+  {% else %}
+  <div class="empty">
+    <p><strong>No bots yet.</strong></p>
+    <p class="muted">Create one above, then press Start and link your phone.</p>
+  </div>
+  {% endfor %}
+</div>

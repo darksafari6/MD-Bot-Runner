@@ -1,182 +1,204 @@
 # WhatsApp MD Bot Runner Manager
 
-A self-hosted control panel for running **multiple WhatsApp Multi-Device bots** on
-[Baileys](https://github.com/WhiskeySockets/Baileys). Create a bot, link it by QR code or
-pairing code, define commands, and watch every connection live from one dashboard.
+A **Linux-native, all-Python** control panel and terminal app for running multiple
+WhatsApp Multi-Device bots — with AI replies over any OpenAI-compatible model.
 
-![status](https://img.shields.io/badge/build-passing-brightgreen)
-![node](https://img.shields.io/badge/node-%3E%3D20.11-blue)
-![license](https://img.shields.io/badge/license-MIT-black)
+No Node.js. No Electron. No simulated states. If WhatsApp is unreachable, the bot says so.
+
+```bash
+git clone https://github.com/darksafari6/Whatsapp-MD-bot-Runner-Manager.git
+cd Whatsapp-MD-bot-Runner-Manager
+./scripts/install.sh          # installs deps, creates .env, runs diagnostics
+.venv/bin/wa serve            # http://127.0.0.1:8080
+```
 
 ---
 
-## Why this rewrite
+## Why the rewrite
 
-The previous version of this repository was a **UI mock**: it drew a dashboard and faked the
-entire bot lifecycle with `setTimeout` — a hard-coded QR payload, a fake phone number, and a
-"connected" state that never touched WhatsApp. Meanwhile the README documented a Next.js API,
-a database and a plugin system that did not exist in the tree.
+This project has been through two honest corrections:
 
-This version does the real thing, and the documentation below describes only what is actually
-implemented.
+1. **It started as a mock.** The first version drew a dashboard and faked the QR code and
+   connection with `setTimeout`. That was replaced with a real TypeScript/Baileys manager.
+2. **Then it moved to Python.** The goal is a Linux-native, AI-centric tool, so the
+   TypeScript/React tree was **deleted entirely**. Everything now runs on Python and Bash:
+   the WhatsApp engine, the panel, the terminal UI, the CLI and the installer.
 
-| | Before | Now |
-|---|---|---|
-| WhatsApp connection | `setTimeout` pretending | Real Baileys sockets, one per bot |
-| Linking | Fake QR string | Live QR + 8-digit pairing code |
-| Backend | None | Express REST API + SSE log stream |
-| Persistence | None | Atomic JSON store + Baileys credential files |
-| Auth | None | Optional `API_TOKEN` (constant-time compare) |
-| Reconnects | None | Exponential backoff, session restore, unlink detection |
-| Tests | None | 108 unit, API and component tests |
-| Desktop | `nodeIntegration: true` mock | Hardened Electron shell (sandboxed, isolated) |
-| Deployment | Manual | `npm start`, Docker, Compose, CI |
+New in v3.0 alongside the port: **AI replies**, **SQLite persistence**, a **Textual TUI**,
+a **`wa` CLI**, and a **systemd-aware Bash installer**.
 
 ---
 
 ## Features
 
-**Bot management**
-- Create unlimited bot instances (bounded by `MAX_INSTANCES`), each with its own session
-- Start / stop / restart / unlink, per bot and in bulk via the API
-- Automatic reconnect with exponential backoff; unlinked devices are detected and their stale
-  credentials deleted
-- Optional resume of connected bots after a manager restart
-- Live per-bot counters: uptime, messages seen, replies sent, commands handled, errors
+**WhatsApp engine** — [neonize](https://github.com/neonize/neonize) (a Python binding over
+`whatsmeow`), one client per bot: QR linking, phone-number pairing codes, automatic reconnect
+with exponential backoff, unlinked-device detection with credential cleanup, presence/typing,
+read receipts, and media kinds.
 
-**Linking**
-- Scan a QR code (rotated automatically) **or** use a phone-number pairing code
-- Credentials persist in `data/sessions/<bot-id>/` so relinking is rare
+**AI replies** — a single OpenAI-compatible client. Point `AI_BASE_URL` at OpenAI, Groq,
+Together, OpenRouter, vLLM, LM Studio or a local **Ollama** (`/v1`). Per-bot model, persona,
+group toggle and memory depth. Tokens, latency and failures are recorded, and a **"Test
+provider"** button performs a real round trip.
 
-**Inbox & sending**
-- Send messages to any number or group from the panel, paced by a per-bot throttle
-- Two-pane inbox: chat list with unread badges, transcript, live updates over SSE
-- Every inbound and outbound message is recorded with direction and origin
-  (`command` vs `manual`)
-- History is memory-only by design — no transcript is written to disk
+**No pretending.** With no provider configured, the AI tab shows an explicit error and the bot
+answers nothing — it never fabricates a reply.
 
-**Ban-safety pacing**
-- Sliding-window rate limit with a minimum gap between sends, per bot
-- Configurable limit (1–60/min) and gap (250 ms–30 s), clamped server-side
-- Optional "typing…" presence with a length-based, jittered delay
-- Replies that must wait report the delay instead of silently hanging
+**Beyond commands** — command rules with `{{sender}}`, `{{args}}`, `{{bot}}`, `{{uptime}}`,
+`{{commands}}`; group/DM toggles; allow/block lists; inbound fall-through to AI.
 
-**Command engine**
-- Per-bot prefix (default `!`), per-bot command list, enable/disable each rule
-- Placeholders: `{{sender}}`, `{{args}}`, `{{instance}}`, `{{status}}`, `{{uptime}}`,
-  `{{received}}`, `{{prefix}}`, `{{commands}}`
-- Exact-match rules (reply to a bare word with no prefix)
-- Group / DM toggles, allowlist and blocklist by number
-- Optional auto-read receipts
+**Inbox** — send to any number or group from the panel, per-chat transcripts, and outbound
+pacing (sliding window + minimum gap) so a number is not flagged for spam.
 
-**Operations**
-- Real-time console via Server-Sent Events, with level/instance/text filters
-- Health endpoint, structured logs, graceful shutdown that closes every socket
-- Optional bearer-token auth; CORS allowlist for split deployments
-- Docker image running as a non-root user with a healthcheck and a `/data` volume
+**Three interfaces** — FastAPI web panel (server-rendered HTMX, no JS build step),
+a Textual terminal dashboard for SSH, and a Typer CLI for scripting.
+
+**Operations** — SQLite in WAL mode, optional bearer-token auth, live SSE status, graceful
+shutdown that closes every socket, Docker image, and a systemd unit with sandboxing.
 
 ---
 
-## Quick start
+## Install
+
+### Requirements
+
+| Requirement | Why |
+|---|---|
+| Python ≥ 3.10 | runtime |
+| `libmagic1` | required by the WhatsApp engine |
+| `ffmpeg` | media messages (text bots work without it) |
+
+`./scripts/install.sh` installs these with `apt`, creates `.venv`, installs the package, writes
+`.env`, and runs `wa doctor`.
 
 ```bash
-git clone https://github.com/darksafari6/Whatsapp-MD-bot-Runner-Manager.git
-cd Whatsapp-MD-bot-Runner-Manager
-npm install
-npm run dev
-```
-
-`npm run dev` starts two processes:
-
-| Process | URL | Notes |
-|---|---|---|
-| API + Baileys runtime | http://localhost:3001 | `tsx watch` |
-| UI dev server | http://localhost:5173 | Vite, proxies `/api` to the API |
-
-Open **http://localhost:5173**, click **New bot**, press **Start**, then scan the QR code or
-request a pairing code.
-
-### Production
-
-```bash
-npm run build     # bundles the UI into dist/ and the server into dist-server/
-npm start         # single process on :3001 serving both API and UI
+./scripts/install.sh              # local virtualenv
+./scripts/install.sh --systemd    # + system unit (root)
+./scripts/install.sh --user       # + per-user unit (no root)
 ```
 
 ### Docker
 
 ```bash
 docker compose up -d --build
-# or
-docker build -t wamanager .
-docker run -d -p 3001:3001 -v wamanager-data:/data -e API_TOKEN=change-me wamanager
+# AI key via env, data on a named volume:
+AI_API_KEY=sk-... docker compose up -d
 ```
 
-The `wamanager-data` volume holds WhatsApp credentials. Lose it and every bot must be relinked.
+### Manual
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+cp .env.example .env
+wa doctor
+wa serve
+```
+
+---
+
+## Usage
+
+### Web panel
+
+`wa serve` → <http://127.0.0.1:8080>. Create a bot, press **Start**, then scan the QR code
+(rendered locally as inline SVG — the payload never leaves your host) or request a pairing
+code.
+
+Tabs per bot: **Overview · Inbox · Commands · Behaviour · AI**.
+
+### Terminal UI
+
+```bash
+wa tui      # s = start, x = stop, r = restart, q = quit
+```
+
+Shares the same SQLite database as the panel, so it works over SSH with no open port.
+
+### CLI
+
+```bash
+wa bot add "Support Bot"      # create
+wa bot list                   # status table
+wa bot commands support-bot   # command rules
+wa bot messages support-bot   # recent traffic
+wa ai check                   # round-trip the provider
+wa ai ask "Summarise today"   # one-off prompt
+wa doctor                     # dependency + config report
+```
+
+---
+
+## AI configuration
+
+Any OpenAI-compatible endpoint works; only the base URL and model change.
+
+```bash
+# OpenAI
+AI_BASE_URL=https://api.openai.com/v1
+AI_API_KEY=sk-...
+AI_MODEL=gpt-4o-mini
+
+# Local Ollama — no API key required for loopback endpoints
+AI_BASE_URL=http://127.0.0.1:11434/v1
+AI_MODEL=llama3.1
+```
+
+Per-bot overrides live in the **AI** tab (model, base URL, persona, memory turns, group
+toggle). The panel reports a provider as configured **only** when a call could actually
+succeed — a remote base URL without a key is reported as unconfigured, never as "ready".
 
 ---
 
 ## Configuration
 
-Copy `.env.example` to `.env`. Everything is optional.
+`.env` (see `.env.example`):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PORT` | `3001` | HTTP port |
-| `HOST` | `0.0.0.0` | Bind address (`127.0.0.1` for loopback-only) |
-| `API_TOKEN` | *empty* | When set, every `/api` request needs `Authorization: Bearer <token>` |
-| `WAMANAGER_DATA_DIR` | `./data` | Sessions + `state.json` |
-| `MAX_INSTANCES` | `10` | Hard cap on concurrent WhatsApp sockets |
-| `LOG_BUFFER` | `2000` | In-memory log ring size |
-| `LOG_LEVEL` | `info` | Manager verbosity |
-| `BAILEYS_LOG_LEVEL` | `silent` | Baileys' own logging (`error`/`warn` for debugging) |
-| `CORS_ORIGINS` | *empty* | Comma-separated extra origins allowed to call the API |
+| `HOST` / `PORT` | `127.0.0.1` / `8080` | Bind address |
+| `API_TOKEN` | *empty* | Bearer token required on `/api/*` |
+| `WAMANAGER_DATA_DIR` | `./data` | SQLite database + WhatsApp sessions |
+| `MAX_INSTANCES` | `10` | Concurrent bots |
+| `LOG_LEVEL` | `INFO` | Verbosity |
+| `AI_BASE_URL` | `https://api.openai.com/v1` | Provider endpoint |
+| `AI_API_KEY` | *empty* | Provider key (loopback endpoints exempt) |
+| `AI_MODEL` | `gpt-4o-mini` | Default model |
+| `AI_TIMEOUT` | `60` | Request timeout (seconds) |
 
-> ⚠️ **Security:** with `API_TOKEN` unset the panel is open to anyone who can reach the port.
-> That is fine on `127.0.0.1`; set a token before exposing it to a network or the internet.
-> Whoever can reach this panel controls the linked WhatsApp accounts.
+`/api/health` stays unauthenticated so container healthchecks work.
 
 ---
 
-## API
+## HTTP API
 
-All routes are under `/api`. Errors return `{ "error": "..." }`.
-
-| Method | Route | Description |
+| Method | Route | Purpose |
 |---|---|---|
-| `GET` | `/health` | Version, uptime, instance counts |
-| `GET` | `/instances` | List bots (includes live QR when pending) |
-| `POST` | `/instances` | Create a bot — body `{ "name": "Support" }` |
-| `GET` | `/instances/:id` | Single bot |
-| `PATCH` | `/instances/:id` | Update `name`, `config`, `commands` |
-| `DELETE` | `/instances/:id` | Stop and delete |
-| `POST` | `/instances/:id/start` | Open the socket |
-| `POST` | `/instances/:id/stop` | Close the socket, keep the session |
-| `POST` | `/instances/:id/restart` | Stop then start |
-| `POST` | `/instances/:id/logout` | Unlink device and delete credentials |
-| `GET` | `/instances/:id/qr` | Current QR + pairing code |
-| `POST` | `/instances/:id/pairing-code` | Body `{ "phoneNumber": "92300…" }` |
-| `POST` | `/instances/:id/messages` | Send a message — body `{ "to": "+92300…" \| "…@g.us", "text": "…" }` |
-| `GET` | `/instances/:id/messages` | Recent messages (`?chatJid=&direction=&limit=`) plus throttle state |
-| `DELETE` | `/instances/:id/messages` | Clear this bot's in-memory inbox |
-| `GET` | `/instances/:id/messages/stream` | SSE: inbox changed |
-| `GET` | `/instances/:id/conversations` | One row per chat, newest first |
-| `POST` | `/instances/:id/conversations/:chatJid/read` | Clear unread badge |
-| `GET` | `/logs?limit=&instanceId=` | Recent log lines |
-| `GET` | `/logs/stream` | SSE stream (`?token=` for EventSource) |
-| `POST` | `/logs/clear` | Clear the ring buffer |
-| `GET`/`PATCH` | `/settings` | Manager preferences |
+| `GET` | `/api/health` | Version, engine, AI status (public) |
+| `GET` | `/api/bots` | List bots |
+| `POST` | `/api/bots` | Create — JSON `{"name": ...}`, form field, or `?name=` |
+| `PATCH` | `/api/bots/{id}` | Update name, config, commands |
+| `DELETE` | `/api/bots/{id}` | Stop and delete |
+| `POST` | `/api/bots/{id}/start\|stop\|restart\|logout` | Lifecycle |
+| `GET` | `/api/bots/{id}/qr` | Current QR / pairing code |
+| `POST` | `/api/bots/{id}/pairing-code` | `{"phone": "92300…"}` |
+| `POST` | `/api/bots/{id}/messages` | `{"to": "+92300…" \| "…@g.us", "text": "…"}` |
+| `GET` | `/api/bots/{id}/messages` | Transcript + throttle state |
+| `GET` | `/api/bots/{id}/conversations` | One row per chat |
+| `DELETE` | `/api/bots/{id}/messages\|memory` | Clear history / AI memory |
+| `GET` | `/api/bots/{id}/ai/usage` | Tokens, calls, failures |
+| `POST` | `/api/ai/check` | Live provider round trip |
+| `GET` | `/api/events` | SSE status stream |
+
+Interactive docs: <http://127.0.0.1:8080/docs>.
 
 ```bash
-curl -X POST localhost:3001/api/instances \
-  -H 'Content-Type: application/json' \
+curl -X POST localhost:8080/api/bots -H 'Content-Type: application/json' \
   -d '{"name":"Support Bot"}'
-
-curl -X POST localhost:3001/api/instances/support-bot/start
-
-curl -X PATCH localhost:3001/api/instances/support-bot \
+curl -X POST localhost:8080/api/bots/support-bot/start
+curl -X POST localhost:8080/api/bots/support-bot/messages \
   -H 'Content-Type: application/json' \
-  -d '{"commands":[{"name":"hours","response":"We are open 9–5, {{sender}}."}]}'
+  -d '{"to":"+923001234567","text":"hello from the panel"}'
 ```
 
 ---
@@ -184,31 +206,21 @@ curl -X PATCH localhost:3001/api/instances/support-bot \
 ## Project layout
 
 ```
-├── shared/types.ts          # Types shared by server and UI (single source of truth)
-├── server/
-│   ├── index.ts             # Express bootstrap, static UI, graceful shutdown
-│   ├── api.ts               # REST routes + validation
-│   ├── runtime.ts           # Baileys socket lifecycle, reconnects, message dispatch
-│   ├── commands.ts          # Pure command matching + template rendering (unit tested)
-│   ├── jid.ts               # Phone/jid parsing and normalisation (pure)
-│   ├── throttle.ts          # Outbound pacing policy (pure, clock injected)
-│   ├── messages.ts          # Inbound extraction + disconnect policy (pure)
-│   ├── inbox.ts             # Bounded in-memory message store + conversations
-│   ├── message-stream.ts    # SSE fan-out for live inbox updates
-│   ├── store.ts             # Atomic JSON persistence + normalisation
-│   ├── logger.ts            # Ring buffer + SSE fan-out
-│   ├── auth.ts              # Optional token auth, rate limiting
-│   ├── baileys-logger.ts    # pino-compatible adapter that redacts QR/creds
-│   └── config.ts            # Environment parsing
-├── src/
-│   ├── App.tsx              # Shell, hash routing, token gate, toasts
-│   ├── state/AppStore.tsx   # Data layer (polling + SSE)
-│   ├── views/               # Dashboard, InstanceDetail, Settings
-│   ├── components/          # Cards, console, connect panel, command/config editors
-│   └── lib/                 # API client, formatting helpers
-├── electron/                # Hardened desktop shell (contextIsolation, sandbox)
-├── test/                    # Vitest: 108 tests (logic, HTTP API, jsdom UI)
-└── scripts/                 # dev runner + esbuild server bundler
+wamanager/
+├── config.py      Environment + settings (no extra deps)
+├── db.py          SQLite: bots, commands, messages, AI usage, memory
+├── jid.py         Phone/jid parsing (pure)
+├── throttle.py    Outbound pacing, injectable clock (pure)
+├── commands.py    Command matching + templating (pure)
+├── ai.py          OpenAI-compatible client, local-endpoint detection
+├── engine.py      neonize lifecycle, reconnect, inbox, AI dispatch
+├── api.py         FastAPI REST + HTMX pages
+├── tui.py         Textual terminal dashboard
+├── cli.py         Typer CLI (`wa`)
+├── templates/     Jinja2 pages and HTMX partials
+└── static/        CSS, app.js, vendored htmx.min.js (offline)
+scripts/install.sh Bash installer + systemd unit
+tests/             88 tests (unit, engine, HTTP, templates)
 ```
 
 ---
@@ -216,65 +228,56 @@ curl -X PATCH localhost:3001/api/instances/support-bot \
 ## Development
 
 ```bash
-npm run dev          # API + UI with hot reload
-npm run typecheck    # tsc --noEmit (strict)
-npm test             # 108 tests
-npm run format       # prettier
-npm run build        # production bundle
-npm start            # run the production bundle
+source .venv/bin/activate
+pytest -q                  # 88 tests
+ruff check wamanager tests
+ruff format wamanager tests
+wa serve --reload          # auto-reload
 ```
 
-CI (`.github/workflows/ci.yml`) typechecks, tests, builds and smoke-tests `/api/health`
-on every push and pull request.
+Tests never touch WhatsApp: the engine tests use protobuf-shaped fixtures, and the HTTP tests
+stub the engine boundary. CI runs the suite on Python 3.10–3.12, lints, checks the installer
+with `bash -n`, and smoke-tests a live server.
 
 ---
 
 ## Troubleshooting
 
-**“Cannot reach WhatsApp servers … TLS / network socket”**
-The host running the manager cannot open a TLS connection to WhatsApp. Check outbound HTTPS,
-DNS, corporate proxies and IPv6. This is the most common reason a container fails to link.
+**`neonize is not installed` / `failed to find libmagic`**
+Install the system dependency: `sudo apt install libmagic1 ffmpeg`, then re-run
+`./scripts/install.sh`. `wa doctor` names exactly what is missing.
 
-**QR appears and immediately expires**
-WhatsApp rotates QR codes roughly every 20 seconds. The panel refetches automatically; if it
-keeps rotating, your clock may be skewed — sync NTP.
-
-**`Device was unlinked`**
-Someone removed the linked device, or WhatsApp invalidated the session. The manager deletes the
-dead credentials; press Start and scan again.
-
-**A send takes several seconds / says "queued"**
-That is the outbound throttle protecting the number. Raise **Max per minute** or lower
-**Minimum gap** under Behaviour, or set `sendTypingIndicator` off to drop the typing pause.
+**Media sending fails**
+`ffmpeg` is missing. Text bots are unaffected.
 
 **`409 This bot is not connected`**
-The bot must be started *and* linked before the panel can send. Check the Overview tab for the
-current status and any connection error.
+Start and link the bot first. The Overview tab shows the current status and the real error.
 
-**`Port 3001 is already in use`**
-Set `PORT` in `.env`, or stop the other process.
+**QR keeps rotating**
+WhatsApp rotates QR codes every ~20 s; the panel refetches automatically. If it never
+completes, check the host clock (NTP) and outbound HTTPS.
 
-**Bots stop after a host reboot**
-Set `autostartConnectedInstances` (Settings) and run the manager as a service
-(`docker compose` with `restart: unless-stopped`, or a systemd unit).
+**`502 AI provider unreachable` / `401 API key`**
+Check `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL`, then press **Test provider** in the AI tab.
 
 ---
 
 ## Limitations & responsible use
 
-- Baileys is an **unofficial** WhatsApp Web client. Automating WhatsApp can get a number
-  **banned**; use a dedicated number and human-like volumes.
-- This manager runs bots **in one process**. For hundreds of instances, run several managers
-  behind a reverse proxy with separate data volumes.
-- Logs **and message history** are in memory only; pipe stdout to your log stack if you need
-  retention, and expect the inbox to empty on restart.
+- neonize/whatsmeow is **unofficial**. Automating WhatsApp can get a number **banned** —
+  use a dedicated number and human-like volumes (the pacing defaults exist for this reason).
+- Bots run **in one process**. For very large fleets, run several instances with separate
+  data directories behind a reverse proxy.
+- Message history is stored in SQLite on your host. It is your data — back it up and protect
+  it accordingly.
 - Not affiliated with, endorsed by, or supported by WhatsApp or Meta.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). Vendored HTMX keeps its own MIT license
+(`wamanager/static/HTMX-LICENSE`).
 
 ## Acknowledgements
 
-Built on [Baileys](https://github.com/WhiskeySockets/Baileys), React, Vite, Tailwind CSS and
-Express.
+[neonize](https://github.com/neonize/neonize) / [whatsmeow](https://github.com/tulir/whatsmeow),
+FastAPI, Jinja2, HTMX, Textual, Typer and Rich.

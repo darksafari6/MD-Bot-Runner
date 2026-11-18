@@ -1,36 +1,36 @@
-# ---- build stage -----------------------------------------------------------
-FROM node:22-bookworm-slim AS build
-WORKDIR /app
+# WhatsApp MD Bot Runner Manager — Python runtime
+FROM python:3.12-slim AS base
 
-COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
-
-COPY . .
-RUN npm run build && npm prune --omit=dev
-
-# ---- runtime stage ---------------------------------------------------------
-FROM node:22-bookworm-slim AS runtime
-ENV NODE_ENV=production \
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
     HOST=0.0.0.0 \
-    PORT=3001 \
+    PORT=8080 \
     WAMANAGER_DATA_DIR=/data
 
+# libmagic: required by the WhatsApp engine. ffmpeg: media messages.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libmagic1 ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Run unprivileged; /data holds WhatsApp credentials, so it must be a volume.
+COPY pyproject.toml README.md LICENSE ./
+COPY wamanager ./wamanager
+RUN pip install --no-cache-dir .
+
+# Unprivileged runtime user; /data holds WhatsApp credentials.
 RUN useradd --system --uid 10001 --home /app wamanager \
-    && mkdir -p /data && chown -R wamanager:wamanager /data
-
-COPY --from=build --chown=wamanager:wamanager /app/node_modules ./node_modules
-COPY --from=build --chown=wamanager:wamanager /app/dist ./dist
-COPY --from=build --chown=wamanager:wamanager /app/dist-server ./dist-server
-COPY --from=build --chown=wamanager:wamanager /app/package.json ./package.json
-
+    && mkdir -p /data \
+    && chown -R wamanager:wamanager /data
 USER wamanager
+
 VOLUME ["/data"]
-EXPOSE 3001
+EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3001)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import os,urllib.request,sys; \
+url=f\"http://127.0.0.1:{os.environ.get('PORT','8080')}/api/health\"; \
+sys.exit(0 if urllib.request.urlopen(url, timeout=4).status == 200 else 1)"
 
-CMD ["node", "dist-server/index.js"]
+CMD ["wa", "serve"]
