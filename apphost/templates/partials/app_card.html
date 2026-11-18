@@ -1,0 +1,36 @@
+<article class="app-card" id="app-{{ app.id }}">
+  <header>
+    <div>
+      <h3>{{ app.name }}</h3>
+      <code class="muted">{{ app.id }}</code>
+    </div>
+    <span class="state state-{{ app.status }}">{{ app.status }}</span>
+  </header>
+
+  <dl class="meta">
+    <div><dt>Framework</dt><dd>{{ app.package_manager }} · {{ app.start_command }}</dd></div>
+    <div><dt>Port</dt><dd>{{ app.port or "—" }}</dd></div>
+    <div><dt>Source</dt><dd>{{ app.source_kind }}{% if app.source_kind == 'git' %} · {{ app.source_url }}{% endif %}</dd></div>
+    {% if app.uptime %}<div><dt>Uptime</dt><dd>{{ app.uptime }}s</dd></div>{% endif %}
+    {% if app.last_error %}<div><dt>Error</dt><dd class="bad">{{ app.last_error }}</dd></div>{% endif %}
+  </dl>
+
+  {% if not app.exists %}<p class="bad small">Project folder is missing: <code>{{ app.workdir }}</code></p>{% endif %}
+  {% if app.task and app.task.running %}
+  <p class="small"><span class="spinner"></span> {{ app.task.kind }}: <code>{{ app.task.command }}</code></p>
+  {% endif %}
+
+  <div class="actions">
+    <button class="btn" hx-post="/ui/apps/{{ app.id }}/start"   hx-target="#app-{{ app.id }}" hx-swap="outerHTML">Start</button>
+    <button class="btn" hx-post="/ui/apps/{{ app.id }}/stop"    hx-target="#app-{{ app.id }}" hx-swap="outerHTML">Stop</button>
+    <button class="btn" hx-post="/ui/apps/{{ app.id }}/restart" hx-target="#app-{{ app.id }}" hx-swap="outerHTML">Restart</button>
+    <button class="btn ghost" hx-post="/ui/apps/{{ app.id }}/install" hx-target="#app-{{ app.id }}" hx-swap="outerHTML">Install</button>
+    {% if app.status == 'running' %}<a class="btn primary" href="/apps/{{ app.id }}/" target="_blank">Open ↗</a>{% endif %}
+    <a class="btn ghost" href="/apps/{{ app.id }}?tab=logs">Logs</a>
+  </div>
+
+  <details class="logbox"{% if app.status in ('crashed', 'starting') %} open{% endif %}>
+    <summary>Recent output</summary>
+    <pre class="log" id="log-{{ app.id }}">{{ log }}</pre>
+  </details>
+</article>

@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}{{ app.name }} · {{ display_name }}{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/">Apps</a> / <strong>{{ app.name }}</strong></nav>
+
+<header class="app-head">
+  <h1>{{ app.name }}</h1>
+  <span class="state state-{{ app.status }}">{{ app.status }}</span>
+  {% if app.status == 'running' %}
+  <a class="btn primary" href="/apps/{{ app.id }}/" target="_blank">Open app ↗</a>
+  {% endif %}
+</header>
+
+<nav class="tabs">
+  {% for name in ["overview", "run", "config", "logs"] %}
+  <a href="/apps/{{ app.id }}?tab={{ name }}" class="{{ 'active' if tab == name else '' }}">{{ name|capitalize }}</a>
+  {% endfor %}
+</nav>
+
+{% if tab == "overview" %}
+<section class="grid2">
+  <div class="card">
+    <h2>Runtime</h2>
+    <dl class="meta">
+      <div><dt>Status</dt><dd>{{ app.status }}</dd></div>
+      <div><dt>PID</dt><dd>{{ app.pid or "—" }}</dd></div>
+      <div><dt>Port</dt><dd>{{ app.port_effective or "—" }}{% if app.runtime_port and app.runtime_port != app.port %} <span class="muted">(from {{ app.port }})</span>{% endif %}</dd></div>
+      <div><dt>Framework</dt><dd>{{ app.framework or "unknown" }}</dd></div>
+      <div><dt>Uptime</dt><dd>{{ (app.uptime ~ "s") if app.uptime else "—" }}</dd></div>
+      <div><dt>Proxy URL</dt><dd><code>/apps/{{ app.id }}/</code></dd></div>
+      <div><dt>Base flag</dt><dd>{{ "on" if app.proxy_base else "off" }}</dd></div>
+      <div><dt>Log file</dt><dd><code>{{ app.log_path or "—" }}</code></dd></div>
+    </dl>
+    {% if app.last_error %}<p class="bad">{{ app.last_error }}</p>{% endif %}
+    <div class="actions">
+      <button class="btn" hx-post="/ui/apps/{{ app.id }}/start" hx-target="#action-result">Start</button>
+      <button class="btn" hx-post="/ui/apps/{{ app.id }}/stop" hx-target="#action-result">Stop</button>
+      <button class="btn" hx-post="/ui/apps/{{ app.id }}/restart" hx-target="#action-result">Restart</button>
+    </div>
+    <div id="action-result"></div>
+  </div>
+
+  <div class="card">
+    <h2>Source</h2>
+    <dl class="meta">
+      <div><dt>Kind</dt><dd>{{ app.source_kind }}</dd></div>
+      <div><dt>Folder</dt><dd><code>{{ app.workdir }}</code></dd></div>
+      {% if app.source_url %}<div><dt>Repository</dt><dd><code>{{ app.source_url }}</code></dd></div>{% endif %}
+      <div><dt>Dependencies</dt><dd>{{ "installed" if app.installed else "not installed" }}</dd></div>
+    </dl>
+    {% if app.source_kind == "git" %}
+    <button class="btn ghost" hx-post="/ui/apps/{{ app.id }}/pull" hx-target="#pull-result">git pull</button>
+    <pre id="pull-result" class="log"></pre>
+    {% endif %}
+    <p class="muted small">Deleting an app removes it from the host. Folder-sourced projects keep their files.</p>
+    <button class="btn danger" hx-post="/ui/apps/{{ app.id }}/delete"
+            hx-confirm="Remove {{ app.name }} from the host?">Remove</button>
+  </div>
+</section>
+{% endif %}
+
+{% if tab == "run" %}
+<section class="grid2">
+  <div class="card">
+    <h2>Install &amp; build</h2>
+    <p class="muted small">Install uses <code>{{ row.install_command }}</code>, build uses <code>{{ row.build_command or "(none detected)" }}</code>.</p>
+    <div class="actions">
+      <button class="btn" hx-post="/ui/apps/{{ app.id }}/install" hx-target="#task-result">Run install</button>
+      <button class="btn" hx-post="/ui/apps/{{ app.id }}/build" hx-target="#task-result"
+              {% if not row.build_command %}disabled{% endif %}>Run build</button>
+    </div>
+    <div id="task-result"></div>
+  </div>
+  <div class="card">
+    <h2>Install output</h2>
+    <pre class="log" id="install-log">{{ install_log or "(no install run yet)" }}</pre>
+  </div>
+</section>
+{% endif %}
+
+{% if tab == "config" %}
+<form class="card form" method="post" action="/ui/apps/{{ app.id }}/config">
+  <h2>Configuration</h2>
+  <label>Name <input name="name" value="{{ row.name }}" required></label>
+  <label>Package manager
+    <select name="package_manager">
+      {% for m in managers %}
+      <option value="{{ m.name }}" {{ "selected" if m.name == row.package_manager else "" }}>{{ m.name }}{{ "" if m.installed else " (not installed)" }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Install command <input name="install_command" value="{{ row.install_command }}"></label>
+  <label>Build command <input name="build_command" value="{{ row.build_command }}"></label>
+  <label>Start command <input name="start_command" value="{{ row.start_command }}" required></label>
+  <label>Port <input name="port" type="number" min="1" max="65535" value="{{ row.port or '' }}"></label>
+  <label>Environment <textarea name="env" rows="6">{{ env_text }}</textarea></label>
+  <label class="check">
+    <input type="checkbox" name="proxy_base" {{ "checked" if row.proxy_base else "" }}>
+    Serve under <code>/apps/{{ row.id }}/</code>
+    <small>Adds <code>--base</code> for Vite/Astro so module URLs work behind the prefix. Turn off to reach the app on its own port only.</small>
+  </label>
+  <label class="check"><input type="checkbox" name="autostart" {{ "checked" if row.autostart else "" }}> Start automatically</label>
+  <button class="btn primary" type="submit">Save</button>
+  <p class="muted small">Changes take effect the next time the app starts.</p>
+</form>
+{% endif %}
+
+{% if tab == "logs" %}
+<section class="card">
+  <div class="section-head">
+    <h2>Logs</h2>
+    <div class="actions">
+      <button class="btn ghost" hx-get="/partials/apps/{{ app.id }}/logs?lines=500" hx-target="#live-log">Refresh</button>
+      <button class="btn ghost" hx-post="/ui/apps/{{ app.id }}/clearlog" hx-target="#live-log">Clear</button>
+    </div>
+  </div>
+  <pre class="log tall" id="live-log"
+       hx-get="/partials/apps/{{ app.id }}/logs?lines=500" hx-trigger="every 3s" hx-swap="innerHTML">{{ log or "(no output yet)" }}</pre>
+</section>
+{% endif %}
+{% endblock %}

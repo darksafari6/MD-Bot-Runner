@@ -1,36 +1,41 @@
-# WhatsApp MD Bot Runner Manager — Python runtime
-FROM python:3.12-slim AS base
+# Container image for App Host.
+#
+# Node and Python live in the same image because the host runs JavaScript
+# projects: the panel is Python, the apps it supervises are Node.
+FROM node:20-bookworm-slim
 
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    HOST=0.0.0.0 \
-    PORT=8080 \
-    WAMANAGER_DATA_DIR=/data
-
-# libmagic: required by the WhatsApp engine. ffmpeg: media messages.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libmagic1 ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+ && apt-get install -y --no-install-recommends \
+      python3 python3-venv python3-pip git tar ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
 COPY pyproject.toml README.md LICENSE ./
-COPY wamanager ./wamanager
-RUN pip install --no-cache-dir .
+COPY apphost ./apphost
+COPY scripts ./scripts
 
-# Unprivileged runtime user; /data holds WhatsApp credentials.
-RUN useradd --system --uid 10001 --home /app wamanager \
-    && mkdir -p /data \
-    && chown -R wamanager:wamanager /data
-USER wamanager
+RUN python3 -m venv /opt/apphost \
+ && /opt/apphost/bin/pip install --no-cache-dir --upgrade pip \
+ && /opt/apphost/bin/pip install --no-cache-dir . \
+ && rm -rf /root/.cache
+
+# Run unprivileged; 10001 matches the compose file.
+RUN useradd --uid 10001 --create-home --shell /bin/bash apphost \
+ && mkdir -p /data \
+ && chown -R apphost:apphost /data /app
+USER 10001
+
+ENV APPHOST_HOST=0.0.0.0 \
+    APPHOST_PORT=8080 \
+    APPHOST_DATA_DIR=/data \
+    APPHOST_TOKEN= \
+    PATH=/opt/apphost/bin:$PATH \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
 
 VOLUME ["/data"]
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import os,urllib.request,sys; \
-url=f\"http://127.0.0.1:{os.environ.get('PORT','8080')}/api/health\"; \
-sys.exit(0 if urllib.request.urlopen(url, timeout=4).status == 200 else 1)"
+  CMD curl -fsS http://127.0.0.1:8080/api/health || exit 1
 
-CMD ["wa", "serve"]
+CMD ["apphost", "serve"]

@@ -1,0 +1,5 @@
+{% for app in apps %}
+{% include "partials/app_card.html" %}
+{% else %}
+<p class="muted">No projects yet.</p>
+{% endfor %}

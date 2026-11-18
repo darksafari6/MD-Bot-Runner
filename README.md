@@ -1,283 +1,227 @@
-# WhatsApp MD Bot Runner Manager
+# App Host
 
-A **Linux-native, all-Python** control panel and terminal app for running multiple
-WhatsApp Multi-Device bots — with AI replies over any OpenAI-compatible model.
+**A Linux application server for JavaScript projects.** Point it at your code —
+a folder, a git repo, or a zip — and it installs dependencies, starts the dev
+server under supervision, and serves it behind one panel. Built for Node.js,
+Vite and React; works for Next.js, Astro, Express and anything else with a
+`package.json`.
 
-No Node.js. No Electron. No simulated states. If WhatsApp is unreachable, the bot says so.
+No AI, no API keys, no cloud. Your code never leaves your machine.
 
 ```bash
 git clone https://github.com/darksafari6/Whatsapp-MD-bot-Runner-Manager.git
 cd Whatsapp-MD-bot-Runner-Manager
-./scripts/install.sh          # installs deps, creates .env, runs diagnostics
-.venv/bin/wa serve            # http://127.0.0.1:8080
+./scripts/install.sh                                   # deps + venv + doctor
+.venv/bin/apphost apps add ~/projects/whatsapp-bot     # register your project
+.venv/bin/apphost serve                                # http://127.0.0.1:8080
 ```
+
+Or install a package: `sudo apt install ./apphost_4.0.0_all.deb`
 
 ---
 
-## Why the rewrite
+## What it actually does
 
-This project has been through two honest corrections:
+1. **You give it code.** Any of three ways:
+   - **Folder** — a directory on this machine that contains `package.json` (managed in place, so your edits and git state stay yours).
+   - **Git** — `https://…`, `ssh://…` or `git@…`, shallow-cloned into the workspace.
+   - **Upload** — a `.zip` / `.tar.gz`, extracted safely (archive traversal and symlinks are rejected).
+2. **It works out how to run it.** Lockfile → package manager (`npm`/`pnpm`/`yarn`/`bun`), `vite.config.*` → Vite, `next.config.*` → Next.js, plus the port from your start script. Everything is shown before you save, and every command is editable.
+3. **It installs and builds.** `npm install` / `pnpm install` / …, then an optional build, streamed to a per-app log with the exit code recorded.
+4. **It starts and supervises.** The process runs in its own session so the whole tree (npm → node → esbuild) can be stopped; crashes are recorded with their exit code.
+5. **It serves it.** Each app gets `/apps/<id>/` on the panel's origin, reverse-proxied to its own port. Absolute asset paths in HTML are rewritten so Vite/React apps work behind the prefix.
 
-1. **It started as a mock.** The first version drew a dashboard and faked the QR code and
-   connection with `setTimeout`. That was replaced with a real TypeScript/Baileys manager.
-2. **Then it moved to Python.** The goal is a Linux-native, AI-centric tool, so the
-   TypeScript/React tree was **deleted entirely**. Everything now runs on Python and Bash:
-   the WhatsApp engine, the panel, the terminal UI, the CLI and the installer.
+### Tested with a real Vite + React app
 
-New in v3.0 alongside the port: **AI replies**, **SQLite persistence**, a **Textual TUI**,
-a **`wa` CLI**, and a **systemd-aware Bash installer**.
+```
+$ python3 scripts/smoke.py
+==> panel on http://127.0.0.1:55357
+    health: {"status":"ok","version":"4.0.0","node":true,...}
+    registered 'smoke-app': npm run dev (port 5173)
+    install: ok=True exit=0
+    proxied page: 392 bytes
+PASS: real project installed, started, and served through the proxy
+```
+
+That is `npm install` of React + Vite, a real dev server, and a real proxied page
+— run by `scripts/smoke.py` in CI on every commit.
 
 ---
 
 ## Features
 
-**WhatsApp engine** — [neonize](https://github.com/neonize/neonize) (a Python binding over
-`whatsmeow`), one client per bot: QR linking, phone-number pairing codes, automatic reconnect
-with exponential backoff, unlinked-device detection with credential cleanup, presence/typing,
-read receipts, and media kinds.
+**Import & detection** — folder / git / zip; lockfile-based package manager detection; Vite, Next, CRA, Astro, Express and plain-Node recognition; port extraction from start scripts; start/install/build commands you can override.
 
-**AI replies** — a single OpenAI-compatible client. Point `AI_BASE_URL` at OpenAI, Groq,
-Together, OpenRouter, vLLM, LM Studio or a local **Ollama** (`/v1`). Per-bot model, persona,
-group toggle and memory depth. Tokens, latency and failures are recorded, and a **"Test
-provider"** button performs a real round trip.
+**Process supervision** — one process tree per app, group SIGTERM then SIGKILL, crash exit codes surfaced, uptime, PID, live log tail, autostart on boot, and an honest `starting`/`running` distinction (an app is only `running` when its port accepts connections).
 
-**No pretending.** With no provider configured, the AI tab shows an explicit error and the bot
-answers nothing — it never fabricates a reply.
+**Port handling that matches reality** — the host injects `PORT`, `VITE_PORT` and `APP_PORT`, then *checks which port the process actually listens on* (via `/proc`) and follows it. Vite ignores `PORT`; this is why that matters. A busy port moves instead of fighting another process.
 
-**Beyond commands** — command rules with `{{sender}}`, `{{args}}`, `{{bot}}`, `{{uptime}}`,
-`{{commands}}`; group/DM toggles; allow/block lists; inbound fall-through to AI.
+**One origin** — `/apps/<id>/…` reverse proxy with HTML rewriting, `Location` rewriting, hop-by-hop header stripping, streaming, websockets for Vite HMR (via the same HTTP upgrade path), and per-app cookie isolation from the panel.
 
-**Inbox** — send to any number or group from the panel, per-chat transcripts, and outbound
-pacing (sliding window + minimum gap) so a number is not flagged for spam.
+**Security defaults** — loopback binding, persistent token auth created on first run, path allow-listing, safe archive extraction, no shell (argv only, never `shell=True`), `no-new-privileges` in Docker, and a hardened systemd unit.
 
-**Three interfaces** — FastAPI web panel (server-rendered HTMX, no JS build step),
-a Textual terminal dashboard for SSH, and a Typer CLI for scripting.
-
-**Operations** — SQLite in WAL mode, optional bearer-token auth, live SSE status, graceful
-shutdown that closes every socket, Docker image, and a systemd unit with sandboxing.
+**Operations** — `.deb` package with systemd unit and maintainer scripts, Bash installer with `--system`/`--user` modes, Docker image with Node and Python, SQLite state, per-app log files, SSE status stream, JSON API, and an `apphost doctor` that tells you exactly what is missing.
 
 ---
 
 ## Install
 
-### Requirements
+### Packages
 
-| Requirement | Why |
+| Method | Command |
 |---|---|
-| Python ≥ 3.10 | runtime |
-| `libmagic1` | required by the WhatsApp engine |
-| `ffmpeg` | media messages (text bots work without it) |
+| Debian/Ubuntu | `sudo apt install ./apphost_4.0.0_all.deb` (build: `./packaging/build-deb.sh`) |
+| Script, system-wide | `sudo ./scripts/install.sh --system` |
+| Script, per-user | `./scripts/install.sh --user` |
+| Script, dev checkout | `./scripts/install.sh` |
+| Docker | `PROJECTS_DIR=~/projects docker compose up -d` |
 
-`./scripts/install.sh` installs these with `apt`, creates `.venv`, installs the package, writes
-`.env`, and runs `wa doctor`.
+### Toolchains
 
-```bash
-./scripts/install.sh              # local virtualenv
-./scripts/install.sh --systemd    # + system unit (root)
-./scripts/install.sh --user       # + per-user unit (no root)
-```
+The host runs your code, so your code's runtime must exist:
 
-### Docker
+| Tool | Needed for | Install |
+|---|---|---|
+| **Node.js ≥ 18** | every project | `sudo apt install nodejs npm` or `./scripts/install.sh --node` |
+| npm / pnpm / yarn / bun | chosen by your lockfile | `corepack enable pnpm` etc. |
+| git | cloning repositories | `sudo apt install git` |
+| ffmpeg | projects that process media | `sudo apt install ffmpeg` |
 
-```bash
-docker compose up -d --build
-# AI key via env, data on a named volume:
-AI_API_KEY=sk-... docker compose up -d
-```
-
-### Manual
-
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
-cp .env.example .env
-wa doctor
-wa serve
-```
+`apphost doctor` reports each one, with the install command, and the panel shows
+a banner instead of pretending a build will work.
 
 ---
 
-## Usage
+## Using it
 
-### Web panel
+### Panel
 
-`wa serve` → <http://127.0.0.1:8080>. Create a bot, press **Start**, then scan the QR code
-(rendered locally as inline SVG — the payload never leaves your host) or request a pairing
-code.
+`apphost serve` → <http://127.0.0.1:8080>. The token is in `<data>/token` (or
+`APPHOST_TOKEN`); log in once and it is stored in a cookie.
 
-Tabs per bot: **Overview · Inbox · Commands · Behaviour · AI**.
+Per app you get four tabs:
 
-### Terminal UI
-
-```bash
-wa tui      # s = start, x = stop, r = restart, q = quit
-```
-
-Shares the same SQLite database as the panel, so it works over SSH with no open port.
+- **Overview** — status, PID, port, proxy URL, start/stop/restart, source, `git pull` for clones.
+- **Run** — install and build with live output and exit codes.
+- **Config** — package manager, commands, port, environment, autostart.
+- **Logs** — streaming tail, refresh, clear on demand.
 
 ### CLI
 
 ```bash
-wa bot add "Support Bot"      # create
-wa bot list                   # status table
-wa bot commands support-bot   # command rules
-wa bot messages support-bot   # recent traffic
-wa ai check                   # round-trip the provider
-wa ai ask "Summarise today"   # one-off prompt
-wa doctor                     # dependency + config report
+apphost doctor                          # what can this machine run?
+apphost inspect ~/projects/bot          # what would it run? (no side effects)
+apphost apps add ~/projects/bot         # register a folder
+apphost apps clone https://…/bot.git    # clone and register
+apphost apps list                       # table of apps
+apphost apps show bot                   # full config as JSON
+apphost apps rm bot [--files]           # forget (or delete an uploaded copy)
+apphost serve [--host 0.0.0.0] [--port 8080]
 ```
 
----
+### HTTP API
 
-## AI configuration
+All routes except `/api/health` require `Authorization: Bearer <token>`.
 
-Any OpenAI-compatible endpoint works; only the base URL and model change.
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/api/health` | version, node presence, app counts (public) |
+| `GET` | `/api/doctor` | toolchain and environment report |
+| `GET` | `/api/toolchains` | package manager versions |
+| `GET` | `/api/apps` | list apps with live state |
+| `POST` | `/api/apps` | register (folder or git) |
+| `POST` | `/api/apps/upload` | register from an archive (multipart) |
+| `GET` | `/api/apps/inspect?path=` | detection preview for a folder |
+| `GET`/`PATCH`/`DELETE` | `/api/apps/{id}` | read / update / remove (`?delete_files=true` for uploads) |
+| `POST` | `/api/apps/{id}/install\|build` | run a task |
+| `POST` | `/api/apps/{id}/start\|stop\|restart` | lifecycle |
+| `POST` | `/api/apps/{id}/pull` | `git pull --ff-only` |
+| `GET` | `/api/apps/{id}/logs?kind=app\|install\|build` | raw log text |
+| `GET` | `/api/events` | SSE status stream |
+| `ANY` | `/apps/{id}/…` | reverse proxy to the app |
 
 ```bash
-# OpenAI
-AI_BASE_URL=https://api.openai.com/v1
-AI_API_KEY=sk-...
-AI_MODEL=gpt-4o-mini
-
-# Local Ollama — no API key required for loopback endpoints
-AI_BASE_URL=http://127.0.0.1:11434/v1
-AI_MODEL=llama3.1
+TOKEN=$(cat ~/.local/share/apphost/token)
+curl -s -X POST localhost:8080/api/apps \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"WhatsApp Bot","source":"folder","path":"/home/me/whatsapp-bot"}'
+curl -s -X POST localhost:8080/api/apps/whatsapp-bot/install -H "Authorization: Bearer $TOKEN"
+curl -s -X POST localhost:8080/api/apps/whatsapp-bot/start   -H "Authorization: Bearer $TOKEN"
 ```
-
-Per-bot overrides live in the **AI** tab (model, base URL, persona, memory turns, group
-toggle). The panel reports a provider as configured **only** when a call could actually
-succeed — a remote base URL without a key is reported as unconfigured, never as "ready".
 
 ---
 
 ## Configuration
 
-`.env` (see `.env.example`):
-
-| Variable | Default | Purpose |
+| Variable | Default | Meaning |
 |---|---|---|
-| `HOST` / `PORT` | `127.0.0.1` / `8080` | Bind address |
-| `API_TOKEN` | *empty* | Bearer token required on `/api/*` |
-| `WAMANAGER_DATA_DIR` | `./data` | SQLite database + WhatsApp sessions |
-| `MAX_INSTANCES` | `10` | Concurrent bots |
-| `LOG_LEVEL` | `INFO` | Verbosity |
-| `AI_BASE_URL` | `https://api.openai.com/v1` | Provider endpoint |
-| `AI_API_KEY` | *empty* | Provider key (loopback endpoints exempt) |
-| `AI_MODEL` | `gpt-4o-mini` | Default model |
-| `AI_TIMEOUT` | `60` | Request timeout (seconds) |
-
-`/api/health` stays unauthenticated so container healthchecks work.
+| `APPHOST_HOST` | `127.0.0.1` | bind address |
+| `APPHOST_PORT` | `8080` | port |
+| `APPHOST_DATA_DIR` | `~/.local/share/apphost` (`/var/lib/apphost` for root) | database, logs, imported projects |
+| `APPHOST_TOKEN` | auto-generated | API/panel access token |
+| `APPHOST_AUTH` | on | set `0` to disable auth (only if already loopback-only) |
+| `APPHOST_ROOTS` | `/` | colon-separated roots the panel may import from |
+| `APPHOST_MAX_APPS` | `10` | concurrent managed projects |
+| `APPHOST_INSTALL_TIMEOUT` | `1800` | seconds before an install is killed |
+| `APPHOST_START_TIMEOUT` | `300` | seconds to wait for an app's port |
+| `APPHOST_AUTOSTART` | on | start apps marked autostart when the host boots |
 
 ---
 
-## HTTP API
-
-| Method | Route | Purpose |
-|---|---|---|
-| `GET` | `/api/health` | Version, engine, AI status (public) |
-| `GET` | `/api/bots` | List bots |
-| `POST` | `/api/bots` | Create — JSON `{"name": ...}`, form field, or `?name=` |
-| `PATCH` | `/api/bots/{id}` | Update name, config, commands |
-| `DELETE` | `/api/bots/{id}` | Stop and delete |
-| `POST` | `/api/bots/{id}/start\|stop\|restart\|logout` | Lifecycle |
-| `GET` | `/api/bots/{id}/qr` | Current QR / pairing code |
-| `POST` | `/api/bots/{id}/pairing-code` | `{"phone": "92300…"}` |
-| `POST` | `/api/bots/{id}/messages` | `{"to": "+92300…" \| "…@g.us", "text": "…"}` |
-| `GET` | `/api/bots/{id}/messages` | Transcript + throttle state |
-| `GET` | `/api/bots/{id}/conversations` | One row per chat |
-| `DELETE` | `/api/bots/{id}/messages\|memory` | Clear history / AI memory |
-| `GET` | `/api/bots/{id}/ai/usage` | Tokens, calls, failures |
-| `POST` | `/api/ai/check` | Live provider round trip |
-| `GET` | `/api/events` | SSE status stream |
-
-Interactive docs: <http://127.0.0.1:8080/docs>.
-
-```bash
-curl -X POST localhost:8080/api/bots -H 'Content-Type: application/json' \
-  -d '{"name":"Support Bot"}'
-curl -X POST localhost:8080/api/bots/support-bot/start
-curl -X POST localhost:8080/api/bots/support-bot/messages \
-  -H 'Content-Type: application/json' \
-  -d '{"to":"+923001234567","text":"hello from the panel"}'
-```
-
----
-
-## Project layout
+## How it works
 
 ```
-wamanager/
-├── config.py      Environment + settings (no extra deps)
-├── db.py          SQLite: bots, commands, messages, AI usage, memory
-├── jid.py         Phone/jid parsing (pure)
-├── throttle.py    Outbound pacing, injectable clock (pure)
-├── commands.py    Command matching + templating (pure)
-├── ai.py          OpenAI-compatible client, local-endpoint detection
-├── engine.py      neonize lifecycle, reconnect, inbox, AI dispatch
-├── api.py         FastAPI REST + HTMX pages
-├── tui.py         Textual terminal dashboard
-├── cli.py         Typer CLI (`wa`)
-├── templates/     Jinja2 pages and HTMX partials
-└── static/        CSS, app.js, vendored htmx.min.js (offline)
-scripts/install.sh Bash installer + systemd unit
-tests/             88 tests (unit, engine, HTTP, templates)
+apphost/
+├── config.py     settings, data dir, token creation
+├── db.py         SQLite: apps (configuration only)
+├── detect.py     package manager / framework / port detection (pure)
+├── sources.py    folder, git clone, safe zip/tar extraction
+├── runner.py     process trees, logs, tasks, port discovery, reverse proxy
+├── doctor.py     toolchain diagnostics
+├── api.py        REST + HTMX panel + proxy routes
+├── cli.py        `apphost` command
+├── templates/    Jinja2 pages
+└── static/       CSS, small JS, vendored HTMX (offline)
+packaging/        .deb build (relocated venv, systemd unit, maintainer scripts)
+scripts/          install.sh, smoke.py
+tests/            unit + real-process + HTTP tests, with Vite/Node fixtures
 ```
+
+Design rules this project follows:
+
+- **Nothing is faked.** If Node is missing, the panel says so. If an app never opens a port, its state stays `starting` with the timeout error, never `running`.
+- **Your folder is yours.** Folder imports are managed in place; nothing is copied, moved, or deleted without an explicit request.
+- **argv, never a shell.** Commands are parsed with `shlex` and executed directly, so a project name cannot become a shell expansion.
+- **Config in the database, state in memory.** A restart of the host never resurrects a stale PID.
 
 ---
 
 ## Development
 
 ```bash
-source .venv/bin/activate
-pytest -q                  # 88 tests
-ruff check wamanager tests
-ruff format wamanager tests
-wa serve --reload          # auto-reload
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+pytest -q                    # 100 tests, including real Node processes
+ruff check apphost tests
+python scripts/smoke.py      # real npm install + Vite + proxy
+./packaging/build-deb.sh     # build the .deb
 ```
 
-Tests never touch WhatsApp: the engine tests use protobuf-shaped fixtures, and the HTTP tests
-stub the engine boundary. CI runs the suite on Python 3.10–3.12, lints, checks the installer
-with `bash -n`, and smoke-tests a live server.
+The suite starts actual Node processes on real ports, registers projects over
+HTTP, runs `npm install`, and asserts that a proxied page contains the app's
+markup. Tests that need Node skip cleanly if it is absent.
 
 ---
 
-## Troubleshooting
+## Limitations (read this)
 
-**`neonize is not installed` / `failed to find libmagic`**
-Install the system dependency: `sudo apt install libmagic1 ffmpeg`, then re-run
-`./scripts/install.sh`. `wa doctor` names exactly what is missing.
-
-**Media sending fails**
-`ffmpeg` is missing. Text bots are unaffected.
-
-**`409 This bot is not connected`**
-Start and link the bot first. The Overview tab shows the current status and the real error.
-
-**QR keeps rotating**
-WhatsApp rotates QR codes every ~20 s; the panel refetches automatically. If it never
-completes, check the host clock (NTP) and outbound HTTPS.
-
-**`502 AI provider unreachable` / `401 API key`**
-Check `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL`, then press **Test provider** in the AI tab.
-
----
-
-## Limitations & responsible use
-
-- neonize/whatsmeow is **unofficial**. Automating WhatsApp can get a number **banned** —
-  use a dedicated number and human-like volumes (the pacing defaults exist for this reason).
-- Bots run **in one process**. For very large fleets, run several instances with separate
-  data directories behind a reverse proxy.
-- Message history is stored in SQLite on your host. It is your data — back it up and protect
-  it accordingly.
-- Not affiliated with, endorsed by, or supported by WhatsApp or Meta.
+- **One host, one user.** Apps run as the user running the panel. There is no per-app sandbox — treat panel access as shell access.
+- **Dev servers, not production serving.** Vite's dev server is for development. Build a static bundle and serve it with a real web server for production.
+- **No websocket proxying for arbitrary paths.** Vite's HMR works through the standard path; other websocket endpoints may need a direct port connection.
+- **Uploads are capped** at 100 MiB and 50 000 files; use git for large repositories.
+- **Linux only.** It depends on `systemd` conventions, `/proc` port discovery and POSIX process groups.
 
 ## License
 
 MIT — see [LICENSE](LICENSE). Vendored HTMX keeps its own MIT license
-(`wamanager/static/HTMX-LICENSE`).
-
-## Acknowledgements
-
-[neonize](https://github.com/neonize/neonize) / [whatsmeow](https://github.com/tulir/whatsmeow),
-FastAPI, Jinja2, HTMX, Textual, Typer and Rich.
+(`apphost/static/HTMX-LICENSE`).

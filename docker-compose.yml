@@ -1,30 +1,25 @@
 services:
-  wamanager:
+  apphost:
     build: .
-    image: wamanager:latest
-    container_name: wamanager
+    image: apphost:4
+    container_name: apphost
     restart: unless-stopped
     ports:
-      - '8080:8080'
+      # Bind to loopback: the panel controls processes on this machine.
+      - "127.0.0.1:8080:8080"
     environment:
-      # Strongly recommended whenever the port is reachable.
-      API_TOKEN: ${API_TOKEN:-}
-      MAX_INSTANCES: ${MAX_INSTANCES:-10}
-      AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
-      AI_API_KEY: ${AI_API_KEY:-}
-      AI_MODEL: ${AI_MODEL:-gpt-4o-mini}
+      APPHOST_HOST: 0.0.0.0
+      APPHOST_PORT: "8080"
+      APPHOST_DATA_DIR: /data
+      # Leave empty to auto-generate a token in /data/token; set it to pin one.
+      APPHOST_TOKEN: ${APPHOST_TOKEN:-}
+      APPHOST_MAX_APPS: "10"
     volumes:
-      # Credentials + SQLite database. Losing this logs every bot out.
-      - wamanager-data:/data
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=4).status==200 else 1)"
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      - apphost-data:/data
+      # Mount the projects you want to run, read-write so npm can install.
+      - ${PROJECTS_DIR:-./projects}:/projects
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
-  wamanager-data:
+  apphost-data:

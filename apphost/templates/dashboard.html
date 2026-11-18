@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Apps · {{ display_name }}{% endblock %}
+{% block content %}
+
+{% if report.missing_required %}
+<div class="banner bad">
+  <strong>Node.js is not usable on this machine.</strong>
+  <ul>
+    {% for check in report.missing_required %}
+    <li><code>{{ check.name }}</code>: {{ check.detail }}{% if check.hint %} — {{ check.hint }}{% endif %}</li>
+    {% endfor %}
+  </ul>
+  <p>Vite and React projects cannot be installed or started until this is fixed.</p>
+</div>
+{% endif %}
+
+<section class="cards">
+  <div class="card stat"><span class="label">Apps</span><strong>{{ apps|length }}</strong></div>
+  <div class="card stat"><span class="label">Running</span><strong>{{ running }}</strong></div>
+  <div class="card stat"><span class="label">App limit</span><strong>{{ apps|length }}/{{ max_apps }}</strong></div>
+</section>
+
+<section class="toolchains">
+  <h2>Toolchain</h2>
+  <table class="mini">
+    <thead><tr><th>Manager</th><th>Version</th><th>Path</th></tr></thead>
+    <tbody>
+      {% for m in managers %}
+      <tr>
+        <td>{{ m.name }}</td>
+        <td>{% if m.installed %}{{ m.version or "installed" }}{% else %}<span class="bad">not installed</span>{% endif %}</td>
+        <td class="muted">{{ m.path or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">Only installed managers can install and build projects. Detection prefers a lockfile.</p>
+</section>
+
+<section>
+  <div class="section-head">
+    <h2>Your projects</h2>
+    <a class="btn primary" href="/register">Add a project</a>
+  </div>
+
+  {% if not apps %}
+  <div class="empty">
+    <h3>No projects yet</h3>
+    <p>Point the host at a folder containing <code>package.json</code>, clone a repo, or upload a zip.</p>
+    <a class="btn primary" href="/register">Add your first project</a>
+  </div>
+  {% else %}
+  <div id="app-list" class="app-list"
+       hx-get="/partials/apps" hx-trigger="every 4s" hx-swap="innerHTML">
+    {% include "partials/app_list.html" %}
+  </div>
+  {% endif %}
+</section>
+
+{% endblock %}

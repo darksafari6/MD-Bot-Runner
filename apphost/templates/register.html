@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Add a project · {{ display_name }}{% endblock %}
+{% block content %}
+<h1>Add a project</h1>
+
+<section class="grid2">
+  <form class="card form" method="post" action="/register">
+    <h2>1 · Source</h2>
+    <label>Name
+      <input name="name" placeholder="My WhatsApp bot" required>
+    </label>
+
+    <fieldset>
+      <legend>Where is the code?</legend>
+      <label class="radio"><input type="radio" name="source" value="folder" checked> Folder on this machine</label>
+      <label class="radio"><input type="radio" name="source" value="git" {% if not git_ok %}disabled{% endif %}> Git repository</label>
+      <label class="radio"><input type="radio" name="source" value="upload" disabled> Upload archive (use the form on the right)</label>
+    </fieldset>
+
+    <label>Folder path
+      <input name="path" placeholder="/home/you/projects/whatsapp-bot">
+      <small>Must contain <code>package.json</code>. Allowed roots: {{ roots|join(", ") }}</small>
+    </label>
+
+    <label>Git URL (optional)
+      <input name="url" placeholder="https://github.com/you/whatsapp-bot.git">
+      <small>{% if git_ok %}Shallow clone, then detected automatically.{% else %}git is not installed.{% endif %}</small>
+    </label>
+
+    <label>Start command override (optional)
+      <input name="start_command" placeholder="npm run dev -- --host 0.0.0.0">
+      <small>Leave empty to detect from package.json.</small>
+    </label>
+
+    <label>Port (optional)
+      <input name="port" type="number" min="1" max="65535" placeholder="auto">
+      <small>The host points the app at this port and proxies it under <code>/apps/&lt;id&gt;/</code>.</small>
+    </label>
+
+    <label>Environment (KEY=value per line)
+      <textarea name="env" rows="4" placeholder="WA_SESSION=default&#10;LOG_LEVEL=debug"></textarea>
+    </label>
+
+    <label class="check"><input type="checkbox" name="autostart"> Start automatically when the host starts</label>
+
+    <button class="btn primary" type="submit">Add project</button>
+  </form>
+
+  <div class="stack">
+    <form class="card form" method="post" action="/upload" enctype="multipart/form-data">
+      <h2>2 · Or upload a zip</h2>
+      <p class="muted small">A folder contains <code>package.json</code>. GitHub’s “Download ZIP” works as-is; the wrapper folder is detected.</p>
+      <label>Archive
+        <input type="file" name="file" accept=".zip,.tar,.gz,.tgz" required>
+      </label>
+      <label>Name (optional)
+        <input name="name" placeholder="taken from the archive name">
+      </label>
+      <button class="btn" type="submit">Upload and add</button>
+      <p class="muted small">Max 100 MiB.</p>
+    </form>
+
+    <div class="card">
+      <h2>Supported toolchains</h2>
+      <table class="mini">
+        <tbody>
+        {% for m in managers %}
+          <tr>
+            <td>{{ m.name }}</td>
+            <td>{% if m.installed %}{{ m.version or "ok" }}{% else %}<span class="bad">missing</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted small">Vite, Next.js, Create React App, Astro and plain Node servers are detected automatically.</p>
+    </div>
+  </div>
+</section>
+{% endblock %}

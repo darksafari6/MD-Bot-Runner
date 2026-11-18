@@ -1,106 +1,119 @@
 from __future__ import annotations
 
-import time
+import sqlite3
+from pathlib import Path
 
-from wamanager.db import DEFAULT_CONFIG, Database
+import pytest
 
-
-def test_creates_bot_with_defaults(db: Database):
-    bot = db.create_bot("support", "Support Bot")
-    assert bot.id == "support"
-    assert bot.status == "stopped"
-    assert bot.config["command_prefix"] == "!"
-    assert {cmd["name"] for cmd in bot.commands} >= {"ping", "help", "info"}
+from apphost.db import App, Database
 
 
-def test_update_bot_merges_json_fields(db: Database):
-    db.create_bot("b1", "Bot")
-    merged = {**DEFAULT_CONFIG, "command_prefix": ".", "outbound_per_minute": 5}
-    updated = db.update_bot("b1", config=merged, name="Renamed")
+@pytest.fixture()
+def db(tmp_path: Path) -> Database:
+    return Database(tmp_path / "test.sqlite3")
+
+
+def make_app(app_id: str = "demo", **kw: object) -> App:
+    base = {
+        "id": app_id,
+        "name": "Demo",
+        "source_kind": "folder",
+        "workdir": "/tmp/demo",
+        "start_command": "npm run dev",
+        "port": 5173,
+    }
+    base.update(kw)
+    return App(**base)  # type: ignore[arg-type]
+
+
+def test_schema_is_created(db: Database) -> None:
+    with db.connect() as conn:
+        tables = {
+            r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    assert {"apps", "meta"} <= tables
+
+
+def test_add_and_get(db: Database) -> None:
+    db.add_app(make_app(env={"A": "1"}))
+    stored = db.get_app("demo")
+    assert stored is not None
+    assert stored.name == "Demo"
+    assert stored.env == {"A": "1"}
+    assert stored.created_at and stored.updated_at
+
+
+def test_ids_are_unique(db: Database) -> None:
+    db.add_app(make_app())
+    with pytest.raises(sqlite3.IntegrityError):
+        db.add_app(make_app())
+
+
+def test_update_only_allowed_fields(db: Database) -> None:
+    db.add_app(make_app())
+    updated = db.update_app("demo", {"name": "Renamed", "id": "hacked", "workdir": "/etc"})
     assert updated is not None
     assert updated.name == "Renamed"
-    assert updated.config["command_prefix"] == "."
-    assert updated.config["outbound_per_minute"] == 5
+    assert updated.id == "demo"
+    assert updated.workdir == "/tmp/demo"
 
 
-def test_unknown_fields_are_ignored(db: Database):
-    db.create_bot("b1", "Bot")
-    updated = db.update_bot("b1", nonsense="value")  # type: ignore[arg-type]
+def test_update_port_and_autostart(db: Database) -> None:
+    db.add_app(make_app(autostart=False))
+    updated = db.update_app("demo", {"port": "6000", "autostart": True})
     assert updated is not None
-    assert updated.name == "Bot"
+    assert updated.port == 6000
+    assert updated.autostart is True
 
 
-def test_commands_can_be_replaced(db: Database):
-    db.create_bot("b1", "Bot")
-    db.replace_commands(
-        "b1",
-        [
-            {"name": "hours", "response": "9-5", "enabled": True},
-            {"name": "", "response": "dropped"},
-            {"name": "empty", "response": "   "},
-        ],
-    )
-    commands = db.list_commands("b1")
-    assert [c["name"] for c in commands] == ["hours"]
+def test_update_port_blank_clears(db: Database) -> None:
+    db.add_app(make_app())
+    updated = db.update_app("demo", {"port": ""})
+    assert updated is not None and updated.port is None
 
 
-def test_messages_are_paginated_newest_last(db: Database):
-    db.create_bot("b1", "Bot")
-    for index in range(20):
-        db.add_message("b1", "chat@s.whatsapp.net", "Chat", "in", f"m{index}")
-    recent = db.list_messages("b1", limit=5)
-    assert [m["body"] for m in recent] == ["m15", "m16", "m17", "m18", "m19"]
+def test_update_missing_app_returns_none(db: Database) -> None:
+    assert db.update_app("ghost", {"name": "x"}) is None
 
 
-def test_conversations_group_by_chat(db: Database):
-    db.create_bot("b1", "Bot")
-    db.add_message("b1", "a@s.whatsapp.net", "A", "in", "one", created_at=time.time() - 5)
-    db.add_message("b1", "a@s.whatsapp.net", "A", "out", "two", created_at=time.time() - 4)
-    db.add_message("b1", "b@g.us", "B", "in", "three", created_at=time.time())
-
-    chats = db.conversations("b1")
-    assert len(chats) == 2
-    assert chats[0]["chat_jid"] == "b@g.us"
-    assert chats[0]["is_group"] is True
-    assert chats[1]["total"] == 2
-    assert chats[1]["last_body"] == "two"
+def test_env_roundtrip_through_json(db: Database) -> None:
+    db.add_app(make_app(env={"WA_SESSION": "main", "LOG": "debug"}))
+    db.update_app("demo", {"env": {"ONLY": "one"}})
+    stored = db.get_app("demo")
+    assert stored is not None
+    assert stored.env == {"ONLY": "one"}
 
 
-def test_deleting_bot_cascades(db: Database):
-    db.create_bot("b1", "Bot")
-    db.add_message("b1", "a@s.whatsapp.net", "A", "in", "hi")
-    assert db.delete_bot("b1")
-    assert db.list_messages("b1") == []
-    assert db.list_commands("b1") == []
+def test_listing_is_sorted_by_name(tmp_path: Path) -> None:
+    db = Database(tmp_path / "x.sqlite3")
+    db.add_app(make_app("b", name="zulu"))
+    db.add_app(make_app("a", name="alpha"))
+    assert [a.id for a in db.list_apps()] == ["a", "b"]
 
 
-def test_ai_usage_summary(db: Database):
-    db.create_bot("b1", "Bot")
-    db.add_ai_usage("b1", "gpt-4o-mini", 100, 50, 300)
-    db.add_ai_usage("b1", "gpt-4o-mini", 10, 5, 100, ok=False, error="timeout")
-    summary = db.ai_usage_summary("b1")
-    assert summary["calls"] == 2
-    assert summary["prompt_tokens"] == 110
-    assert summary["output_tokens"] == 55
-    assert summary["failures"] == 1
+def test_delete(db: Database) -> None:
+    db.add_app(make_app())
+    assert db.delete_app("demo") is True
+    assert db.get_app("demo") is None
+    assert db.delete_app("demo") is False
 
 
-def test_memory_is_scoped_per_chat(db: Database):
-    db.create_bot("b1", "Bot")
-    db.append_memory("b1", "a@s.whatsapp.net", "user", "hello")
-    db.append_memory("b1", "a@s.whatsapp.net", "assistant", "hi there")
-    db.append_memory("b1", "b@s.whatsapp.net", "user", "other")
-
-    memory = db.get_memory("b1", "a@s.whatsapp.net", turns=5)
-    assert [m["content"] for m in memory] == ["hello", "hi there"]
-
-    db.clear_memory("b1")
-    assert db.get_memory("b1", "a@s.whatsapp.net") == []
+def test_meta_upsert(db: Database) -> None:
+    db.set_meta("k", "1")
+    db.set_meta("k", "2")
+    assert db.get_meta("k") == "2"
+    assert db.get_meta("missing", "fallback") == "fallback"
 
 
-def test_memory_turn_limit(db: Database):
-    db.create_bot("b1", "Bot")
-    for index in range(20):
-        db.append_memory("b1", "a@s.whatsapp.net", "user", f"m{index}")
-    assert len(db.get_memory("b1", "a@s.whatsapp.net", turns=2)) == 4
-    assert db.get_memory("b1", "a@s.whatsapp.net", turns=0) == []
+def test_id_taken(db: Database) -> None:
+    assert db.id_taken("demo") is False
+    db.add_app(make_app())
+    assert db.id_taken("demo") is True
+
+
+def test_broken_env_json_does_not_crash(db: Database) -> None:
+    db.add_app(make_app())
+    with db.connect() as conn:
+        conn.execute("UPDATE apps SET env = 'not-json' WHERE id = 'demo'")
+    stored = db.get_app("demo")
+    assert stored is not None and stored.env == {}

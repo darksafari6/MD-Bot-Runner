@@ -2,66 +2,99 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
-    name: Python ${{ matrix.python }}
+    name: Test (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.10', '3.11', '3.12']
+        python: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"   # the runner tests start real Node processes
 
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
           cache: pip
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update -qq
-          # libmagic is required by neonize; ffmpeg enables media features.
-          sudo apt-get install -y -qq libmagic1 ffmpeg
-
-      - name: Install package
+      - name: Install
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
       - name: Lint
         run: |
-          ruff check wamanager tests
-          ruff format --check wamanager tests
+          ruff check apphost tests
+          ruff format --check apphost tests
+
+      - name: Shell scripts
+        run: |
+          bash -n scripts/install.sh
+          bash -n packaging/build-deb.sh
 
       - name: Tests
         run: pytest -q
 
-      - name: Shell syntax
-        run: bash -n scripts/install.sh
+  smoke:
+    name: Smoke test (real server + real Vite app)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Import smoke test
-        run: |
-          python -c "import wamanager, wamanager.api, wamanager.engine, wamanager.tui"
-          wa --help > /dev/null
+      - name: Install host
+        run: pip install -e ".[dev]"
 
-      - name: Server smoke test
+      - name: Doctor
+        run: apphost doctor
+
+      - name: Real end-to-end run (npm install, start, proxy)
+        run: python scripts/smoke.py
+
+  package:
+    name: Build .deb
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build
+        run: ./packaging/build-deb.sh
+
+      - name: Verify package
         run: |
-          export WAMANAGER_DATA_DIR="$RUNNER_TEMP/data" PORT=8099
-          wa serve &
-          SERVER_PID=$!
-          for _ in $(seq 1 30); do
-            curl -sf http://127.0.0.1:8099/api/health > /dev/null && break
-            sleep 1
-          done
-          curl -sf http://127.0.0.1:8099/api/health | grep -q '"status":"ok"'
-          curl -sf -o /dev/null http://127.0.0.1:8099/
-          curl -sf -o /dev/null http://127.0.0.1:8099/static/app.css
-          kill "$SERVER_PID"
+          set -euo pipefail
+          deb=$(ls dist/*.deb | head -1)
+          dpkg-deb -I "$deb"
+          dpkg-deb -c "$deb" | grep -q "usr/lib/systemd/system/apphost.service"
+          # the venv must not point back at the build directory
+          rm -rf /tmp/pkgcheck && dpkg-deb -x "$deb" /tmp/pkgcheck
+          if grep -rq "$GITHUB_WORKSPACE" /tmp/pkgcheck/usr/lib/apphost/venv; then
+            echo "package contains build paths"; exit 1
+          fi
+          /tmp/pkgcheck/usr/lib/apphost/venv/bin/python -c "import apphost; print(apphost.VERSION)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apphost-deb
+          path: dist/*.deb
+          retention-days: 14

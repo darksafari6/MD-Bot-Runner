@@ -1,29 +1,32 @@
 from __future__ import annotations
 
-import sys
+import shutil
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-
-from wamanager.config import Settings  # noqa: E402
-from wamanager.db import Database  # noqa: E402
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture()
-def db(tmp_path: Path) -> Database:
-    database = Database(tmp_path / "test.sqlite3")
-    yield database
-    database.close()
+def fixture_node() -> Path:
+    """A real, runnable Node project."""
+    return FIXTURES / "plain-node"
 
 
 @pytest.fixture()
-def settings(tmp_path: Path) -> Settings:
-    config = Settings()
-    object.__setattr__(config, "data_dir", tmp_path)
-    object.__setattr__(config, "database_path", tmp_path / "test.sqlite3")
-    object.__setattr__(config, "sessions_dir", tmp_path / "sessions")
-    config.prepare()
-    return config
+def fixture_vite() -> Path:
+    """A Vite + React project (not installed)."""
+    return FIXTURES / "vite-react"
+
+
+@pytest.fixture()
+def copied_node(tmp_path: Path, fixture_node: Path) -> Path:
+    dest = tmp_path / "project"
+    shutil.copytree(fixture_node, dest)
+    return dest
+
+
+@pytest.fixture()
+def node_available() -> bool:
+    return shutil.which("node") is not None

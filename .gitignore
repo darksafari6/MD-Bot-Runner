@@ -2,28 +2,33 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
-.venv/
-venv/
-.Python
+.eggs/
 build/
 dist/
+.venv/
+venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
 .coverage
 htmlcov/
 
-# Runtime data: WhatsApp credentials and message history are secrets.
+# App Host runtime data (SQLite, per-app logs, imported projects)
 data/
-sessions/
 *.sqlite3
 *.sqlite3-wal
 *.sqlite3-shm
+logs/
 
-# Local configuration
+# Local configuration / secrets
 .env
-.env.*
-!.env.example
+token
 
+# JavaScript artifacts from imported projects
+node_modules/
+
+# OS / editor
 .DS_Store
-*.log
+*.swp
+.idea/
+.vscode/

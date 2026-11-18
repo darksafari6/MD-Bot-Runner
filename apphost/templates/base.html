@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ display_name }}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="dot"></span>{{ display_name }}</a>
+    <nav>
+      <a href="/">Apps</a>
+      <a href="/register">Add app</a>
+      <a href="/docs">API</a>
+    </nav>
+    <span class="pill">v{{ version }}</span>
+    {% if not auth_required %}<span class="pill warn">auth off</span>{% endif %}
+  </header>
+
+  <main>
+    {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer>
+    <span>Data: <code>{{ data_dir }}</code></span>
+    <span>Local only — apps are run as your user.</span>
+  </footer>
+</body>
+</html>
