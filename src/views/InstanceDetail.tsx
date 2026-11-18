@@ -15,13 +15,14 @@ import type { Instance } from '../../shared/types';
 import { CommandEditor } from '../components/CommandEditor';
 import { ConfigPanel } from '../components/ConfigPanel';
 import { ConnectPanel } from '../components/ConnectPanel';
+import { InboxPanel } from '../components/InboxPanel';
 import { LogConsole } from '../components/LogConsole';
 import { Button, Card, StatusPill } from '../components/ui';
 import { formatDuration, formatRelative, isBusy, uptimeSeconds } from '../lib/format';
 import { useAppStore } from '../state/AppStore';
 import { cn } from '../lib/utils';
 
-type Tab = 'overview' | 'commands' | 'logs';
+type Tab = 'overview' | 'inbox' | 'commands' | 'logs';
 
 export function InstanceDetail({ instance, onBack }: { instance: Instance; onBack: () => void }) {
   const { actions, instances } = useAppStore();
@@ -33,7 +34,8 @@ export function InstanceDetail({ instance, onBack }: { instance: Instance; onBac
     () =>
       [
         { id: 'overview' as const, label: 'Overview', icon: Gauge },
-        { id: 'commands' as const, label: 'Commands', icon: MessageSquare },
+        { id: 'inbox' as const, label: 'Inbox', icon: MessageSquare },
+        { id: 'commands' as const, label: 'Commands', icon: Gauge },
         { id: 'logs' as const, label: 'Logs', icon: Terminal },
       ] satisfies Array<{ id: Tab; label: string; icon: typeof Gauge }>,
     [],
@@ -104,7 +106,9 @@ export function InstanceDetail({ instance, onBack }: { instance: Instance; onBac
         ))}
       </div>
 
-      {tab === 'logs' ? (
+      {tab === 'inbox' ? (
+        <InboxPanel instance={instance} />
+      ) : tab === 'logs' ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <LogConsole
             instances={instances}

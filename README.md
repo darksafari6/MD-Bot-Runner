@@ -28,7 +28,7 @@ implemented.
 | Persistence | None | Atomic JSON store + Baileys credential files |
 | Auth | None | Optional `API_TOKEN` (constant-time compare) |
 | Reconnects | None | Exponential backoff, session restore, unlink detection |
-| Tests | None | 36 unit + component tests |
+| Tests | None | 108 unit, API and component tests |
 | Desktop | `nodeIntegration: true` mock | Hardened Electron shell (sandboxed, isolated) |
 | Deployment | Manual | `npm start`, Docker, Compose, CI |
 
@@ -47,6 +47,19 @@ implemented.
 **Linking**
 - Scan a QR code (rotated automatically) **or** use a phone-number pairing code
 - Credentials persist in `data/sessions/<bot-id>/` so relinking is rare
+
+**Inbox & sending**
+- Send messages to any number or group from the panel, paced by a per-bot throttle
+- Two-pane inbox: chat list with unread badges, transcript, live updates over SSE
+- Every inbound and outbound message is recorded with direction and origin
+  (`command` vs `manual`)
+- History is memory-only by design — no transcript is written to disk
+
+**Ban-safety pacing**
+- Sliding-window rate limit with a minimum gap between sends, per bot
+- Configurable limit (1–60/min) and gap (250 ms–30 s), clamped server-side
+- Optional "typing…" presence with a length-based, jittered delay
+- Replies that must wait report the delay instead of silently hanging
 
 **Command engine**
 - Per-bot prefix (default `!`), per-bot command list, enable/disable each rule
@@ -143,6 +156,12 @@ All routes are under `/api`. Errors return `{ "error": "..." }`.
 | `POST` | `/instances/:id/logout` | Unlink device and delete credentials |
 | `GET` | `/instances/:id/qr` | Current QR + pairing code |
 | `POST` | `/instances/:id/pairing-code` | Body `{ "phoneNumber": "92300…" }` |
+| `POST` | `/instances/:id/messages` | Send a message — body `{ "to": "+92300…" \| "…@g.us", "text": "…" }` |
+| `GET` | `/instances/:id/messages` | Recent messages (`?chatJid=&direction=&limit=`) plus throttle state |
+| `DELETE` | `/instances/:id/messages` | Clear this bot's in-memory inbox |
+| `GET` | `/instances/:id/messages/stream` | SSE: inbox changed |
+| `GET` | `/instances/:id/conversations` | One row per chat, newest first |
+| `POST` | `/instances/:id/conversations/:chatJid/read` | Clear unread badge |
 | `GET` | `/logs?limit=&instanceId=` | Recent log lines |
 | `GET` | `/logs/stream` | SSE stream (`?token=` for EventSource) |
 | `POST` | `/logs/clear` | Clear the ring buffer |
@@ -171,6 +190,11 @@ curl -X PATCH localhost:3001/api/instances/support-bot \
 │   ├── api.ts               # REST routes + validation
 │   ├── runtime.ts           # Baileys socket lifecycle, reconnects, message dispatch
 │   ├── commands.ts          # Pure command matching + template rendering (unit tested)
+│   ├── jid.ts               # Phone/jid parsing and normalisation (pure)
+│   ├── throttle.ts          # Outbound pacing policy (pure, clock injected)
+│   ├── messages.ts          # Inbound extraction + disconnect policy (pure)
+│   ├── inbox.ts             # Bounded in-memory message store + conversations
+│   ├── message-stream.ts    # SSE fan-out for live inbox updates
 │   ├── store.ts             # Atomic JSON persistence + normalisation
 │   ├── logger.ts            # Ring buffer + SSE fan-out
 │   ├── auth.ts              # Optional token auth, rate limiting
@@ -183,7 +207,7 @@ curl -X PATCH localhost:3001/api/instances/support-bot \
 │   ├── components/          # Cards, console, connect panel, command/config editors
 │   └── lib/                 # API client, formatting helpers
 ├── electron/                # Hardened desktop shell (contextIsolation, sandbox)
-├── test/                    # Vitest: server logic + jsdom component tests
+├── test/                    # Vitest: 108 tests (logic, HTTP API, jsdom UI)
 └── scripts/                 # dev runner + esbuild server bundler
 ```
 
@@ -194,7 +218,7 @@ curl -X PATCH localhost:3001/api/instances/support-bot \
 ```bash
 npm run dev          # API + UI with hot reload
 npm run typecheck    # tsc --noEmit (strict)
-npm test             # 36 tests
+npm test             # 108 tests
 npm run format       # prettier
 npm run build        # production bundle
 npm start            # run the production bundle
@@ -219,6 +243,14 @@ keeps rotating, your clock may be skewed — sync NTP.
 Someone removed the linked device, or WhatsApp invalidated the session. The manager deletes the
 dead credentials; press Start and scan again.
 
+**A send takes several seconds / says "queued"**
+That is the outbound throttle protecting the number. Raise **Max per minute** or lower
+**Minimum gap** under Behaviour, or set `sendTypingIndicator` off to drop the typing pause.
+
+**`409 This bot is not connected`**
+The bot must be started *and* linked before the panel can send. Check the Overview tab for the
+current status and any connection error.
+
 **`Port 3001 is already in use`**
 Set `PORT` in `.env`, or stop the other process.
 
@@ -234,7 +266,8 @@ Set `autostartConnectedInstances` (Settings) and run the manager as a service
   **banned**; use a dedicated number and human-like volumes.
 - This manager runs bots **in one process**. For hundreds of instances, run several managers
   behind a reverse proxy with separate data volumes.
-- Logs are in memory only; pipe stdout to your log stack if you need retention.
+- Logs **and message history** are in memory only; pipe stdout to your log stack if you need
+  retention, and expect the inbox to empty on restart.
 - Not affiliated with, endorsed by, or supported by WhatsApp or Meta.
 
 ## License

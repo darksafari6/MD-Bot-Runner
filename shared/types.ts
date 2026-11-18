@@ -34,7 +34,7 @@ export interface CommandRule {
 }
 
 export interface InstanceConfig {
-  /** Workspace policy (chat jid or "groups"/"dms") where commands are allowed. */
+  /** Character(s) that introduce a command, e.g. "!" or ".". */
   commandPrefix: string;
   respondToGroups: boolean;
   respondToDms: boolean;
@@ -43,6 +43,15 @@ export interface InstanceConfig {
   /** Never reply to these numbers. */
   blockedNumbers: string[];
   autoReadMessages: boolean;
+  /**
+   * Messages per minute allowed outbound. Applies to command replies and
+   * messages sent from the panel, protecting the number from rate-limit bans.
+   */
+  outboundLimitPerMinute: number;
+  /** Minimum spacing between two outbound messages, in milliseconds. */
+  outboundMinGapMs: number;
+  /** Show "typing…" before replying, which looks far less robotic. */
+  sendTypingIndicator: boolean;
 }
 
 export interface InstanceStats {
@@ -74,6 +83,50 @@ export interface ManagerSettings {
   autostartConnectedInstances: boolean;
   logRetention: number;
   commandPrefixDefault: string;
+}
+
+export type MessageDirection = 'in' | 'out';
+export type MessageKind = 'text' | 'image' | 'video' | 'audio' | 'document' | 'sticker' | 'other';
+
+export interface InboxMessage {
+  id: string;
+  instanceId: string;
+  chatJid: string;
+  number: string | null;
+  chatName: string;
+  senderJid: string;
+  senderName: string;
+  direction: MessageDirection;
+  origin: 'command' | 'manual' | 'system';
+  text: string;
+  kind: MessageKind;
+  ts: number;
+  error?: string;
+}
+
+export interface Conversation {
+  chatJid: string;
+  chatName: string;
+  number: string | null;
+  isGroup: boolean;
+  lastMessage: string;
+  lastTs: number;
+  count: number;
+  unread: number;
+  lastDirection: MessageDirection;
+}
+
+export interface SendMessageRequest {
+  /** Phone number ("+92 300 1234567") or jid ("…@g.us"). */
+  to: string;
+  text: string;
+}
+
+export interface SendMessageResult {
+  queued: boolean;
+  message: InboxMessage;
+  /** Milliseconds the message waited for the throttle. */
+  waitedMs: number;
 }
 
 export interface HealthPayload {
@@ -114,7 +167,18 @@ export const DEFAULT_CONFIG: InstanceConfig = {
   allowedNumbers: [],
   blockedNumbers: [],
   autoReadMessages: false,
+  outboundLimitPerMinute: 20,
+  outboundMinGapMs: 1200,
+  sendTypingIndicator: true,
 };
+
+/** Bounds enforced by the API so a typo cannot disable pacing entirely. */
+export const THROTTLE_LIMITS = {
+  minPerMinute: 1,
+  maxPerMinute: 60,
+  minGapMs: 250,
+  maxGapMs: 30_000,
+} as const;
 
 export const DEFAULT_STATS: InstanceStats = {
   messagesReceived: 0,

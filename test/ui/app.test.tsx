@@ -22,6 +22,8 @@ const baseInstance: Instance = {
   lastError: null,
 };
 
+const sentBodies: Array<{ to: string; text: string }> = [];
+
 function mockApi(instances: Instance[]) {
   const state = [...instances];
   vi.stubGlobal(
@@ -69,6 +71,79 @@ function mockApi(instances: Instance[]) {
               message: '«ping» replied to 923001234567',
             },
           ],
+        });
+      }
+      if (url.includes('/messages/stream')) {
+        return json({});
+      }
+      if (url.includes('/conversations/') && url.endsWith('/read')) {
+        return json({ ok: true, unread: 0 });
+      }
+      if (url.includes('/conversations')) {
+        return json({
+          conversations: [
+            {
+              chatJid: '923001234567@s.whatsapp.net',
+              chatName: '+923001234567',
+              number: '923001234567',
+              isGroup: false,
+              lastMessage: '!ping',
+              lastTs: Date.now(),
+              count: 1,
+              unread: 1,
+              lastDirection: 'in',
+            },
+          ],
+          unread: 1,
+        });
+      }
+      if (url.includes('/messages') && method === 'POST') {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { to: string; text: string };
+        sentBodies.push(body);
+        return json(
+          {
+            queued: false,
+            waitedMs: 0,
+            message: {
+              id: 'out-1',
+              instanceId: 'support-bot',
+              chatJid: body.to,
+              number: body.to,
+              chatName: body.to,
+              senderJid: '',
+              senderName: 'Bot',
+              direction: 'out',
+              origin: 'manual',
+              text: body.text,
+              kind: 'text',
+              ts: Date.now(),
+            },
+          },
+          201,
+        );
+      }
+      if (url.includes('/messages') && method === 'DELETE') {
+        return json({ cleared: true });
+      }
+      if (url.includes('/messages')) {
+        return json({
+          messages: [
+            {
+              id: 'in-1',
+              instanceId: 'support-bot',
+              chatJid: '923001234567@s.whatsapp.net',
+              number: '923001234567',
+              chatName: '+923001234567',
+              senderJid: '923001234567@s.whatsapp.net',
+              senderName: 'Ali',
+              direction: 'in',
+              origin: 'system',
+              text: '!ping',
+              kind: 'text',
+              ts: Date.now(),
+            },
+          ],
+          throttle: { remaining: 19, limit: 20, minGapMs: 1200 },
         });
       }
       if (url.endsWith('/api/instances') && method === 'GET') {
@@ -164,5 +239,56 @@ describe('App', () => {
     mockApi([baseInstance]);
     render(<App />);
     expect(await screen.findByText(/«ping» replied to 923001234567/)).toBeInTheDocument();
+  });
+});
+
+describe('Inbox', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    window.location.hash = '';
+    sentBodies.length = 0;
+  });
+
+  async function openInbox(user: ReturnType<typeof userEvent.setup>) {
+    mockApi([baseInstance]);
+    render(<App />);
+    const names = await screen.findAllByText('Support Bot');
+    await user.click(names[0]);
+    await user.click(await screen.findByRole('button', { name: /^inbox$/i }));
+  }
+
+  it('shows the transcript and remaining throttle quota', async () => {
+    const user = userEvent.setup();
+    await openInbox(user);
+
+    // "!ping" appears both in the chat list preview and the transcript bubble.
+    expect((await screen.findAllByText('!ping')).length).toBeGreaterThanOrEqual(2);
+    expect(await screen.findByText(/19\/20 left this minute/)).toBeInTheDocument();
+  });
+
+  it('sends a message and clears the composer', async () => {
+    const user = userEvent.setup();
+    await openInbox(user);
+
+    const box = await screen.findByLabelText('Message text');
+    await user.type(box, 'hello from test');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => expect(sentBodies).toHaveLength(1));
+    expect(sentBodies[0]).toEqual({ to: '923001234567@s.whatsapp.net', text: 'hello from test' });
+    await waitFor(() => expect(box).toHaveValue(''));
+  });
+
+  it('disables the composer when the bot is not connected', async () => {
+    const user = userEvent.setup();
+    const stopped = { ...baseInstance, status: 'stopped' as const };
+    mockApi([stopped]);
+    render(<App />);
+    const names = await screen.findAllByText('Support Bot');
+    await user.click(names[0]);
+    await user.click(await screen.findByRole('button', { name: /^inbox$/i }));
+
+    expect(await screen.findByLabelText('Message text')).toBeDisabled();
+    expect(await screen.findByText(/not connected/i)).toBeInTheDocument();
   });
 });

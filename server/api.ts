@@ -1,10 +1,18 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
-import type { CommandRule, Instance, InstanceConfig } from '../shared/types.js';
+import {
+  THROTTLE_LIMITS,
+  type CommandRule,
+  type Instance,
+  type InstanceConfig,
+  type MessageDirection,
+} from '../shared/types.js';
 import { authMiddleware, rateLimit } from './auth.js';
 import { config } from './config.js';
 import type { LogHub } from './logger.js';
-import { isValidInstanceId, type Store } from './store.js';
-import type { BotRuntime } from './runtime.js';
+import { clampInt, isValidInstanceId, type Store } from './store.js';
+import { RuntimeError, type BotRuntime } from './runtime.js';
+import type { Inbox } from './inbox.js';
+import type { MessageStream } from './message-stream.js';
 
 const VERSION = '2.0.0';
 
@@ -25,7 +33,13 @@ function asyncRoute(
   };
 }
 
-export function createApi(store: Store, runtime: BotRuntime, hub: LogHub) {
+export function createApi(
+  store: Store,
+  runtime: BotRuntime,
+  hub: LogHub,
+  inbox: Inbox,
+  streams: MessageStream,
+) {
   const api = express.Router();
 
   api.use(express.json({ limit: '256kb' }));
@@ -160,6 +174,69 @@ export function createApi(store: Store, runtime: BotRuntime, hub: LogHub) {
     }),
   );
 
+  /** Send a message from the panel. Wrapped in the instance's throttle. */
+  api.post(
+    '/instances/:id/messages',
+    asyncRoute(async (req, res) => {
+      const instance = requireInstance(store, req.params.id);
+      const to = typeof req.body?.to === 'string' ? req.body.to : '';
+      const text = typeof req.body?.text === 'string' ? req.body.text : '';
+      if (!to.trim()) throw new HttpError(400, 'A recipient ("to") is required');
+      if (!text.trim()) throw new HttpError(400, 'Message text cannot be empty');
+      const result = await runtime.sendMessage(instance.id, to, text);
+      res.status(201).json(result);
+    }),
+  );
+
+  /** Recent messages for one bot, newest last. */
+  api.get('/instances/:id/messages', (req, res) => {
+    const instance = requireInstance(store, req.params.id);
+    const limit = Number(req.query.limit) || 100;
+    const chatJid = typeof req.query.chatJid === 'string' ? req.query.chatJid : undefined;
+    const direction = req.query.direction;
+    if (direction !== undefined && direction !== 'in' && direction !== 'out') {
+      throw new HttpError(400, 'direction must be "in" or "out"');
+    }
+    res.json({
+      messages: inbox.query({
+        instanceId: instance.id,
+        chatJid,
+        direction: direction as MessageDirection | undefined,
+        limit,
+      }),
+      throttle: runtime.throttleStatus(instance.id),
+    });
+  });
+
+  /** One row per chat, newest activity first. */
+  api.get('/instances/:id/conversations', (req, res) => {
+    const instance = requireInstance(store, req.params.id);
+    res.json({
+      conversations: inbox.conversations(instance.id),
+      unread: inbox.totalUnread(instance.id),
+    });
+  });
+
+  /** Live inbox updates for one bot, so the UI never has to poll messages. */
+  api.get('/instances/:id/messages/stream', (req, res) => {
+    const instance = requireInstance(store, req.params.id);
+    streams.attach(res, instance.id);
+  });
+
+  api.post('/instances/:id/conversations/:chatJid/read', (req, res) => {
+    const instance = requireInstance(store, req.params.id);
+    const chatJid = String(req.params.chatJid);
+    if (!chatJid.includes('@')) throw new HttpError(400, 'Invalid chat jid');
+    inbox.markRead(instance.id, chatJid);
+    res.json({ ok: true, unread: inbox.totalUnread(instance.id) });
+  });
+
+  api.delete('/instances/:id/messages', (req, res) => {
+    const instance = requireInstance(store, req.params.id);
+    inbox.clear(instance.id);
+    res.json({ cleared: true });
+  });
+
   api.get('/settings', (_req, res) => {
     res.json({ settings: store.settings });
   });
@@ -198,7 +275,7 @@ export function createApi(store: Store, runtime: BotRuntime, hub: LogHub) {
   api.use((_req, _res, next) => next(new HttpError(404, 'Endpoint not found')));
 
   api.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err instanceof HttpError ? err.status : 500;
+    const status = err instanceof HttpError || err instanceof RuntimeError ? err.status : 500;
     const message = err instanceof Error ? err.message : 'Unexpected server error';
     if (status >= 500) hub.error(`API error: ${message}`);
     res.status(status).json({ error: message });
@@ -234,8 +311,29 @@ function validateConfig(input: unknown, current: InstanceConfig): InstanceConfig
     if (!prefix) throw new HttpError(400, 'Command prefix cannot be empty');
     next.commandPrefix = prefix;
   }
-  for (const key of ['respondToGroups', 'respondToDms', 'autoReadMessages'] as const) {
+  for (const key of [
+    'respondToGroups',
+    'respondToDms',
+    'autoReadMessages',
+    'sendTypingIndicator',
+  ] as const) {
     if (typeof value[key] === 'boolean') next[key] = value[key] as boolean;
+  }
+  if (value.outboundLimitPerMinute !== undefined) {
+    next.outboundLimitPerMinute = clampInt(
+      value.outboundLimitPerMinute,
+      THROTTLE_LIMITS.minPerMinute,
+      THROTTLE_LIMITS.maxPerMinute,
+      current.outboundLimitPerMinute,
+    );
+  }
+  if (value.outboundMinGapMs !== undefined) {
+    next.outboundMinGapMs = clampInt(
+      value.outboundMinGapMs,
+      THROTTLE_LIMITS.minGapMs,
+      THROTTLE_LIMITS.maxGapMs,
+      current.outboundMinGapMs,
+    );
   }
   if (Array.isArray(value.allowedNumbers)) {
     next.allowedNumbers = parseNumbers(value.allowedNumbers);

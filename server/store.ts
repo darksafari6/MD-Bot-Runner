@@ -5,6 +5,7 @@ import {
   DEFAULT_COMMANDS,
   DEFAULT_CONFIG,
   DEFAULT_STATS,
+  THROTTLE_LIMITS,
   type Instance,
   type InstanceConfig,
   type ManagerSettings,
@@ -158,6 +159,19 @@ export function normalizeInstance(input: Partial<Instance> & { id?: string }): I
     allowedNumbers: sanitizeNumbers(input.config?.allowedNumbers),
     blockedNumbers: sanitizeNumbers(input.config?.blockedNumbers),
     commandPrefix: (input.config?.commandPrefix ?? DEFAULT_CONFIG.commandPrefix).trim().slice(0, 3),
+    outboundLimitPerMinute: clampInt(
+      input.config?.outboundLimitPerMinute,
+      THROTTLE_LIMITS.minPerMinute,
+      THROTTLE_LIMITS.maxPerMinute,
+      DEFAULT_CONFIG.outboundLimitPerMinute,
+    ),
+    outboundMinGapMs: clampInt(
+      input.config?.outboundMinGapMs,
+      THROTTLE_LIMITS.minGapMs,
+      THROTTLE_LIMITS.maxGapMs,
+      DEFAULT_CONFIG.outboundMinGapMs,
+    ),
+    sendTypingIndicator: input.config?.sendTypingIndicator !== false,
   };
   if (!config.commandPrefix) config.commandPrefix = DEFAULT_CONFIG.commandPrefix;
 
@@ -187,6 +201,13 @@ export function normalizeInstance(input: Partial<Instance> & { id?: string }): I
     stats: { ...DEFAULT_STATS, ...(input.stats ?? {}) },
     lastError: input.lastError ?? null,
   };
+}
+
+/** Clamp untrusted numeric input into an allowed range. */
+export function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const parsed = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(Math.trunc(parsed), min), max);
 }
 
 function sanitizeNumbers(value: unknown): string[] {

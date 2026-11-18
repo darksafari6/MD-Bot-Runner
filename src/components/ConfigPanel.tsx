@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Save } from 'lucide-react';
-import type { Instance, InstanceConfig } from '../../shared/types';
+import { THROTTLE_LIMITS, type Instance, type InstanceConfig } from '../../shared/types';
 import { useAppStore } from '../state/AppStore';
 import { Button, Card, Field, inputClass, SectionTitle, Toggle } from './ui';
 
@@ -90,6 +90,56 @@ export function ConfigPanel({ instance }: { instance: Instance }) {
           checked={config.autoReadMessages}
           onChange={(value) => setConfig((prev) => ({ ...prev, autoReadMessages: value }))}
         />
+        <Toggle
+          label="Show typing indicator"
+          checked={config.sendTypingIndicator}
+          onChange={(value) => setConfig((prev) => ({ ...prev, sendTypingIndicator: value }))}
+        />
+      </div>
+
+      <div className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
+        <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-slate-500">
+          Outbound pacing
+        </p>
+        <p className="mb-3 text-[11px] text-slate-500">
+          Slows replies down so the number is not flagged for spam. Lower values are riskier.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field
+            label="Max per minute"
+            hint={`${THROTTLE_LIMITS.minPerMinute}–${THROTTLE_LIMITS.maxPerMinute}`}
+          >
+            <input
+              type="number"
+              min={THROTTLE_LIMITS.minPerMinute}
+              max={THROTTLE_LIMITS.maxPerMinute}
+              value={config.outboundLimitPerMinute}
+              onChange={(event) =>
+                setConfig((prev) => ({
+                  ...prev,
+                  outboundLimitPerMinute: Number(event.target.value),
+                }))
+              }
+              className={inputClass}
+            />
+          </Field>
+          <Field
+            label="Minimum gap (ms)"
+            hint={`${THROTTLE_LIMITS.minGapMs}–${THROTTLE_LIMITS.maxGapMs}`}
+          >
+            <input
+              type="number"
+              min={THROTTLE_LIMITS.minGapMs}
+              max={THROTTLE_LIMITS.maxGapMs}
+              step={50}
+              value={config.outboundMinGapMs}
+              onChange={(event) =>
+                setConfig((prev) => ({ ...prev, outboundMinGapMs: Number(event.target.value) }))
+              }
+              className={inputClass}
+            />
+          </Field>
+        </div>
       </div>
 
       <Field

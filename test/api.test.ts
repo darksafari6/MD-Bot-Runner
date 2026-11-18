@@ -5,20 +5,48 @@ import path from 'node:path';
 import express from 'express';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApi } from '../server/api.js';
+import { Inbox } from '../server/inbox.js';
 import { LogHub } from '../server/logger.js';
-import type { BotRuntime } from '../server/runtime.js';
+import { MessageStream } from '../server/message-stream.js';
+import { RuntimeError, type BotRuntime } from '../server/runtime.js';
 import { Store } from '../server/store.js';
 
 let server: Server;
 let baseUrl: string;
 let dir: string;
 
-/** The API only needs start/stop/getQr from the runtime for these routes. */
+/** The API only needs a subset of the runtime for these routes. */
+const sentMessages: Array<{ id: string; to: string; text: string }> = [];
 const fakeRuntime = {
   getQr: () => ({ qr: 'qr-payload', pairingCode: null }),
   start: async (id: string) => ({ id, status: 'starting' }),
   stop: async (id: string) => ({ id, status: 'stopped' }),
   liveCount: () => 0,
+  throttleStatus: () => ({ remaining: 19, limit: 20, minGapMs: 1200 }),
+  sendMessage: async (id: string, to: string, text: string) => {
+    if (id === 'disconnected-bot') {
+      throw new RuntimeError(409, 'This bot is not connected. Start it and link a device first.');
+    }
+    sentMessages.push({ id, to, text });
+    return {
+      queued: false,
+      waitedMs: 0,
+      message: {
+        id: 'm1',
+        instanceId: id,
+        chatJid: `${to}@s.whatsapp.net`,
+        number: to,
+        chatName: `+${to}`,
+        senderJid: '',
+        senderName: 'Bot',
+        direction: 'out' as const,
+        origin: 'manual' as const,
+        text,
+        kind: 'text' as const,
+        ts: Date.now(),
+      },
+    };
+  },
 } as unknown as BotRuntime;
 
 beforeAll(async () => {
@@ -26,7 +54,7 @@ beforeAll(async () => {
   const store = new Store(dir);
   await store.init();
   const app = express();
-  app.use('/api', createApi(store, fakeRuntime, new LogHub(200)));
+  app.use('/api', createApi(store, fakeRuntime, new LogHub(200), new Inbox(), new MessageStream()));
 
   await new Promise<void>((resolve) => {
     server = app.listen(0, '127.0.0.1', () => resolve());
@@ -130,6 +158,89 @@ describe('API', () => {
     expect(status).toBe(200);
     const list = await call('/instances');
     expect((list.body.instances as unknown[]).length).toBe(0);
+  });
+
+  it('sends a message through the instance', async () => {
+    await call('/instances', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Sender Bot' }),
+    });
+
+    const response = await call('/instances/sender-bot/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: '+92 300 1234567', text: 'hello from the panel' }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(sentMessages.at(-1)).toMatchObject({ id: 'sender-bot', text: 'hello from the panel' });
+  });
+
+  it('rejects an empty recipient or body', async () => {
+    const noTo = await call('/instances/sender-bot/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: '', text: 'hi' }),
+    });
+    expect(noTo.status).toBe(400);
+
+    const noText = await call('/instances/sender-bot/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: '923001234567', text: '   ' }),
+    });
+    expect(noText.status).toBe(400);
+  });
+
+  it('answers 409 when the bot is not connected', async () => {
+    await call('/instances', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Disconnected Bot' }),
+    });
+    const response = await call('/instances/disconnected-bot/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: '923001234567', text: 'hi' }),
+    });
+    expect(response.status).toBe(409);
+    expect(String(response.body.error)).toMatch(/not connected/i);
+  });
+
+  it('returns inbox messages and throttle state', async () => {
+    const response = await call('/instances/sender-bot/messages?limit=10');
+    expect(response.status).toBe(200);
+    expect(Array.isArray(response.body.messages)).toBe(true);
+    expect(response.body.throttle).toMatchObject({ limit: 20 });
+  });
+
+  it('validates the direction filter', async () => {
+    const response = await call('/instances/sender-bot/messages?direction=sideways');
+    expect(response.status).toBe(400);
+  });
+
+  it('lists conversations and clears the inbox', async () => {
+    const conversations = await call('/instances/sender-bot/conversations');
+    expect(conversations.status).toBe(200);
+    expect(Array.isArray(conversations.body.conversations)).toBe(true);
+
+    const cleared = await call('/instances/sender-bot/messages', { method: 'DELETE' });
+    expect(cleared.status).toBe(200);
+  });
+
+  it('clamps outbound pacing settings to safe bounds', async () => {
+    const response = await call('/instances/sender-bot', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        config: { outboundLimitPerMinute: 9999, outboundMinGapMs: 1 },
+      }),
+    });
+    expect(response.status).toBe(200);
+    const config = (response.body.instance as { config: Record<string, number> }).config;
+    expect(config.outboundLimitPerMinute).toBe(60);
+    expect(config.outboundMinGapMs).toBe(250);
   });
 
   it('returns 404 for unknown endpoints', async () => {

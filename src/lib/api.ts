@@ -1,10 +1,13 @@
 import type {
   CommandRule,
+  Conversation,
   HealthPayload,
+  InboxMessage,
   Instance,
   InstanceConfig,
   LogEntry,
   ManagerSettings,
+  SendMessageResult,
 } from '../../shared/types';
 
 const TOKEN_KEY = 'wamanager.token';
@@ -120,6 +123,39 @@ export const api = {
       body: JSON.stringify({ phoneNumber }),
     }),
 
+  sendMessage: (id: string, to: string, text: string) =>
+    request<SendMessageResult>(`/instances/${id}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ to, text }),
+    }),
+
+  getMessages: (
+    id: string,
+    options: { chatJid?: string; limit?: number; direction?: 'in' | 'out' } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (options.chatJid) params.set('chatJid', options.chatJid);
+    if (options.limit) params.set('limit', String(options.limit));
+    if (options.direction) params.set('direction', options.direction);
+    const query = params.toString();
+    return request<{
+      messages: InboxMessage[];
+      throttle: { remaining: number; limit: number; minGapMs: number };
+    }>(`/instances/${id}/messages${query ? `?${query}` : ''}`);
+  },
+
+  getConversations: (id: string) =>
+    request<{ conversations: Conversation[]; unread: number }>(`/instances/${id}/conversations`),
+
+  markConversationRead: (id: string, chatJid: string) =>
+    request<{ ok: boolean; unread: number }>(
+      `/instances/${id}/conversations/${encodeURIComponent(chatJid)}/read`,
+      { method: 'POST' },
+    ),
+
+  clearMessages: (id: string) =>
+    request<{ cleared: boolean }>(`/instances/${id}/messages`, { method: 'DELETE' }),
+
   getSettings: () => request<{ settings: ManagerSettings }>('/settings').then((r) => r.settings),
 
   updateSettings: (patch: Partial<ManagerSettings>) =>
@@ -158,5 +194,18 @@ export function subscribeToLogs(
     onError?.(new Error('Live log stream disconnected — retrying'));
   };
 
+  return () => source.close();
+}
+
+/**
+ * Subscribe to inbox changes for one bot. The server only signals *that*
+ * something changed; the caller refetches, which keeps the payload small and
+ * avoids duplicating message bodies in two streams.
+ */
+export function subscribeToInbox(instanceId: string, onChange: () => void): () => void {
+  const token = getToken();
+  const query = token ? `?token=${encodeURIComponent(token)}` : '';
+  const source = new EventSource(`/api/instances/${instanceId}/messages/stream${query}`);
+  source.onmessage = () => onChange();
   return () => source.close();
 }

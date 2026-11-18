@@ -3,7 +3,9 @@ import path from 'node:path';
 import express from 'express';
 import { createApi } from './api.js';
 import { config } from './config.js';
+import { Inbox } from './inbox.js';
 import { LogHub } from './logger.js';
+import { MessageStream } from './message-stream.js';
 import { BotRuntime } from './runtime.js';
 import { Store } from './store.js';
 
@@ -11,12 +13,20 @@ async function main(): Promise<void> {
   const hub = new LogHub(config.logBuffer);
   const store = new Store(config.dataDir);
   await store.init();
+  const inbox = new Inbox();
+  const messageStreams = new MessageStream();
 
-  const runtime = new BotRuntime(store, hub, {
-    onChange: () => {
-      /* store already persisted; SSE log stream carries user-facing updates */
+  const runtime = new BotRuntime(
+    store,
+    hub,
+    {
+      onChange: () => {
+        /* store already persisted; SSE log stream carries user-facing updates */
+      },
+      onMessage: (instanceId) => messageStreams.broadcast(instanceId),
     },
-  });
+    inbox,
+  );
 
   const app = express();
   app.disable('x-powered-by');
@@ -39,7 +49,7 @@ async function main(): Promise<void> {
     });
   }
 
-  app.use('/api', createApi(store, runtime, hub));
+  app.use('/api', createApi(store, runtime, hub, inbox, messageStreams));
 
   const indexFile = path.join(config.staticDir, 'index.html');
   if (fs.existsSync(indexFile)) {
